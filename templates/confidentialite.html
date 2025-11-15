@@ -1,0 +1,93 @@
+{% extends "base.html" %}
+
+{% block title %}Confidentialité - Aodio{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0 max-w-4xl mx-auto">
+    <div class="bg-white shadow rounded-lg p-8">
+        <h1 class="text-3xl font-bold text-gray-900 mb-6">Déclaration de confidentialité</h1>
+        
+        <div class="prose max-w-none space-y-6 text-gray-700">
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">1. Collecte des données</h2>
+                <p>
+                    Aodio collecte et traite les fichiers audio et documents que vous uploadez dans le but de générer 
+                    des transcriptions et comptes rendus de réunions. Les données collectées incluent :
+                </p>
+                <ul class="list-disc pl-6 mt-2 space-y-1">
+                    <li>Fichiers audio des réunions</li>
+                    <li>Documents contextuels (ordre du jour, liste des participants, relevés de votes)</li>
+                    <li>Informations contextuelles (président de séance, date de la séance)</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">2. Utilisation des données</h2>
+                <p>
+                    Les données collectées sont utilisées exclusivement pour :
+                </p>
+                <ul class="list-disc pl-6 mt-2 space-y-1">
+                    <li>La transcription automatique des réunions</li>
+                    <li>La génération de comptes rendus et relevés de décisions</li>
+                    <li>L'amélioration de la qualité des transcriptions</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">3. Stockage et sécurité</h2>
+                <p>
+                    Toutes les données sont stockées de manière sécurisée et ne sont accessibles qu'aux personnes 
+                    autorisées. Les fichiers sont conservés uniquement pendant la durée nécessaire au traitement 
+                    et peuvent être supprimés à tout moment sur demande.
+                </p>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">4. Partage des données</h2>
+                <p>
+                    Aodio ne partage pas vos données avec des tiers, sauf dans les cas suivants :
+                </p>
+                <ul class="list-disc pl-6 mt-2 space-y-1">
+                    <li>Services de traitement tiers nécessaires (RunPod pour la diarisation, Voxtral pour la transcription, Claude pour le traitement LLM)</li>
+                    <li>Obligations légales</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">5. Vos droits</h2>
+                <p>
+                    Conformément au RGPD, vous disposez des droits suivants :
+                </p>
+                <ul class="list-disc pl-6 mt-2 space-y-1">
+                    <li>Droit d'accès à vos données</li>
+                    <li>Droit de rectification</li>
+                    <li>Droit à l'effacement</li>
+                    <li>Droit à la portabilité des données</li>
+                    <li>Droit d'opposition au traitement</li>
+                </ul>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">6. Contact</h2>
+                <p>
+                    Pour toute question concernant cette déclaration de confidentialité ou pour exercer vos droits, 
+                    veuillez nous contacter à l'adresse suivante : 
+                    <a href="mailto:contact@aodio.fr" class="text-primary hover:underline">contact@aodio.fr</a>
+                </p>
+            </section>
+
+            <section>
+                <h2 class="text-2xl font-semibold text-gray-900 mb-4">7. Modifications</h2>
+                <p>
+                    Cette déclaration de confidentialité peut être modifiée à tout moment. La version la plus récente 
+                    est toujours disponible sur cette page.
+                </p>
+                <p class="mt-2 text-sm text-gray-500">
+                    Dernière mise à jour : {{ "2024-01-01" }}
+                </p>
+            </section>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

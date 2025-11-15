@@ -1,0 +1,211 @@
+{% extends "base.html" %}
+
+{% block title %}Accueil - Aodio{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="text-center mb-8">
+        <h1 class="text-4xl font-bold text-gray-900 mb-4">Aodio</h1>
+        <p class="text-xl text-gray-600">Transcription audio et préparation de comptes rendus de réunions</p>
+    </div>
+
+    <div class="bg-white shadow rounded-lg p-6 max-w-4xl mx-auto">
+        <form id="uploadForm" enctype="multipart/form-data" class="space-y-6">
+            <!-- Fichier audio -->
+            <div>
+                <label for="audio_file" class="block text-sm font-medium text-gray-700 mb-2">
+                    Fichier audio <span class="text-red-500">*</span>
+                </label>
+                <input type="file" id="audio_file" name="audio_file" accept=".wav,.mp3,.m4a,.flac,.ogg,.webm" 
+                       class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-blue-600" required>
+                <p class="mt-1 text-sm text-gray-500">Formats acceptés: WAV, MP3, M4A, FLAC, OGG, WEBM (max 500 MB)</p>
+            </div>
+
+            <!-- Informations contextuelles -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                    <label for="president_seance" class="block text-sm font-medium text-gray-700 mb-2">
+                        Président de séance
+                    </label>
+                    <input type="text" id="president_seance" name="president_seance" 
+                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary">
+                </div>
+                <div>
+                    <label for="date_seance" class="block text-sm font-medium text-gray-700 mb-2">
+                        Date de la séance <span class="text-red-500">*</span>
+                    </label>
+                    <input type="date" id="date_seance" name="date_seance" 
+                           class="block w-full rounded-md border-gray-300 shadow-sm focus:border-primary focus:ring-primary" required>
+                </div>
+            </div>
+
+            <!-- Documents contextuels -->
+            <div class="space-y-4">
+                <h3 class="text-lg font-medium text-gray-900">Documents contextuels (optionnels)</h3>
+                
+                <div>
+                    <label for="ordre_du_jour" class="block text-sm font-medium text-gray-700 mb-2">
+                        Ordre du jour
+                    </label>
+                    <input type="file" id="ordre_du_jour" name="ordre_du_jour" accept=".txt,.doc,.docx,.pdf"
+                           class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200">
+                </div>
+
+                <div>
+                    <label for="liste_participants" class="block text-sm font-medium text-gray-700 mb-2">
+                        Liste des participants
+                    </label>
+                    <input type="file" id="liste_participants" name="liste_participants" accept=".txt,.doc,.docx,.pdf"
+                           class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200">
+                </div>
+
+                <div>
+                    <label for="releves_votes" class="block text-sm font-medium text-gray-700 mb-2">
+                        Feuille des relevés de votes
+                    </label>
+                    <input type="file" id="releves_votes" name="releves_votes" accept=".txt,.doc,.docx,.pdf"
+                           class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold file:bg-gray-100 file:text-gray-700 hover:file:bg-gray-200">
+                </div>
+            </div>
+
+            <!-- Bouton de soumission -->
+            <div>
+                <button type="submit" id="submitBtn" 
+                        class="w-full bg-primary text-white py-3 px-4 rounded-md hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2 font-medium disabled:bg-gray-400 disabled:cursor-not-allowed">
+                    Démarrer le traitement
+                </button>
+            </div>
+        </form>
+
+        <!-- Zone de statut -->
+        <div id="statusArea" class="mt-6 hidden">
+            <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-medium text-blue-800" id="statusMessage">
+                            Traitement en cours...
+                        </p>
+                        <p class="text-xs text-blue-600 mt-1" id="statusDetails"></p>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Zone de résultats -->
+        <div id="resultsArea" class="mt-6 hidden">
+            <div class="bg-green-50 border border-green-200 rounded-md p-4">
+                <h3 class="text-lg font-medium text-green-800 mb-4">Traitement terminé !</h3>
+                <div class="space-y-2" id="downloadLinks"></div>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+document.getElementById('uploadForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const submitBtn = document.getElementById('submitBtn');
+    const statusArea = document.getElementById('statusArea');
+    const statusMessage = document.getElementById('statusMessage');
+    const statusDetails = document.getElementById('statusDetails');
+    const resultsArea = document.getElementById('resultsArea');
+    const downloadLinks = document.getElementById('downloadLinks');
+    
+    // Désactiver le bouton
+    submitBtn.disabled = true;
+    submitBtn.textContent = 'Traitement en cours...';
+    
+    // Afficher la zone de statut
+    statusArea.classList.remove('hidden');
+    resultsArea.classList.add('hidden');
+    
+    try {
+        // Upload
+        const response = await fetch('/upload', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (!response.ok) {
+            throw new Error(data.error || 'Erreur lors de l\'upload');
+        }
+        
+        const sessionId = data.session_id;
+        statusMessage.textContent = 'Fichiers uploadés avec succès. Traitement en cours...';
+        
+        // Polling du statut
+        const pollInterval = setInterval(async () => {
+            try {
+                const statusResponse = await fetch(`/status/${sessionId}`);
+                const statusData = await statusResponse.json();
+                
+                if (statusData.status === 'completed') {
+                    clearInterval(pollInterval);
+                    statusArea.classList.add('hidden');
+                    resultsArea.classList.remove('hidden');
+                    
+                    // Génération des liens de téléchargement
+                    const documentTypes = [
+                        { key: 'minutes_txt', label: 'Minutes (TXT)' },
+                        { key: 'minutes_docx', label: 'Minutes (DOCX)' },
+                        { key: 'minutes_pdf', label: 'Minutes (PDF)' },
+                        { key: 'pre_cr_txt', label: 'Pré-Compte Rendu (TXT)' },
+                        { key: 'pre_cr_docx', label: 'Pré-Compte Rendu (DOCX)' },
+                        { key: 'pre_cr_pdf', label: 'Pré-Compte Rendu (PDF)' },
+                        { key: 'decisions_txt', label: 'Relevé des Décisions (TXT)' },
+                        { key: 'decisions_docx', label: 'Relevé des Décisions (DOCX)' },
+                        { key: 'decisions_pdf', label: 'Relevé des Décisions (PDF)' }
+                    ];
+                    
+                    downloadLinks.innerHTML = documentTypes.map(doc => `
+                        <a href="/download/${sessionId}/${doc.key}" 
+                           class="block bg-white border border-green-300 rounded-md p-3 hover:bg-green-50 text-green-800">
+                            📄 ${doc.label}
+                        </a>
+                    `).join('');
+                    
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Démarrer le traitement';
+                    
+                } else if (statusData.status === 'error') {
+                    clearInterval(pollInterval);
+                    statusArea.classList.remove('hidden');
+                    statusArea.classList.add('bg-red-50', 'border-red-200');
+                    statusMessage.textContent = 'Erreur: ' + (statusData.message || 'Erreur inconnue');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Démarrer le traitement';
+                } else {
+                    // Mise à jour du statut
+                    const lastStage = statusData.stages && statusData.stages.length > 0 
+                        ? statusData.stages[statusData.stages.length - 1] 
+                        : null;
+                    
+                    if (lastStage) {
+                        statusDetails.textContent = `${lastStage.stage}: ${lastStage.message}`;
+                    }
+                }
+            } catch (error) {
+                console.error('Erreur lors du polling:', error);
+            }
+        }, 5000); // Poll toutes les 5 secondes
+        
+    } catch (error) {
+        statusArea.classList.remove('hidden');
+        statusArea.classList.add('bg-red-50', 'border-red-200');
+        statusMessage.textContent = 'Erreur: ' + error.message;
+        submitBtn.disabled = false;
+        submitBtn.textContent = 'Démarrer le traitement';
+    }
+});
+</script>
+{% endblock %}
+
