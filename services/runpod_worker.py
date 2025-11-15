@@ -162,36 +162,38 @@ class RunPodWorker:
     
     def _transcribe_segment_batch(self, audio_url: str, segments: List[Dict]) -> List[Dict]:
         """
-        Transcrit un batch de segments avec Voxtral
+        Transcrit un batch de segments avec Voxtral via Mistral AI API
+        
+        Note: Voxtral-small-latest est un modèle de Mistral AI accessible via:
+        - Endpoint: https://api.mistral.ai/v1/audio/transcriptions
+        - Modèle: voxtral-small-latest
+        - Supporte timestamp_granularities=["segment"] pour obtenir les timestamps
         
         Args:
             audio_url: URL du fichier audio
-            segments: Liste des segments à transcrire
+            segments: Liste des segments de diarisation (pour référence)
             
         Returns:
             list: Liste des transcriptions avec texte et métadonnées
         """
         try:
-            # Préparation du prompt pour Voxtral
-            prompt = """Objectif:
-- Transcription verbatim fidèle de l'audio
-- Formatage simple sans identification des locuteurs (car la diarisation est gérée séparément par Pyannote)
-
-Instructions clés:
-1. Transcription mot à mot - pas de résumé ni d'interprétation
-2. Respect de l'orthographe et ponctuation - pour une transcription professionnelle
-3. Inclusion des hésitations naturelles - pour garder le caractère authentique du discours oral
-4. Pas de diarisation - les locuteurs sont déjà identifiés par Pyannote
-5. Format de sortie minimal - juste le texte transcrit, sans commentaires"""
+            # Le worker RunPod doit appeler l'API Mistral AI avec:
+            # - model: "voxtral-small-latest"
+            # - file_url: URL du fichier audio
+            # - timestamp_granularities: ["segment"] pour obtenir les timestamps
+            # - language: "fr" (optionnel, améliore la précision)
+            # - temperature: 0.0 (pour des résultats déterministes)
             
             payload = {
                 "input": {
                     "task": "transcription",
                     "audio_url": audio_url,
-                    "segments": segments,
-                    "model": "voxtral-small-latest",
-                    "prompt": prompt,
-                    "temperature": 0.0
+                    "segments": segments,  # Segments de diarisation pour référence
+                    "model": "voxtral-small-latest",  # Modèle Mistral AI
+                    "api_endpoint": "https://api.mistral.ai/v1/audio/transcriptions",
+                    "timestamp_granularities": ["segment"],  # Pour obtenir start/end
+                    "language": "fr",  # Optionnel mais recommandé
+                    "temperature": 0.0  # Déterministe
                 }
             }
             
@@ -206,7 +208,36 @@ Instructions clés:
             job_id = response.json().get('id')
             result = self._wait_for_completion(job_id)
             
-            return result.get('transcriptions', [])
+            # Format de réponse attendu de Mistral AI:
+            # {
+            #     "text": "texte complet",
+            #     "segments": [
+            #         {"text": "...", "start": 0.0, "end": 5.2},
+            #         ...
+            #     ]
+            # }
+            # On doit mapper ces segments avec les speakers de la diarisation
+            
+            mistral_segments = result.get('segments', [])
+            transcriptions = []
+            
+            # Mapping des segments Mistral avec les segments de diarisation
+            for diar_seg in segments:
+                # Trouver le segment Mistral correspondant (par timestamp)
+                matching_mistral = None
+                for mistral_seg in mistral_segments:
+                    if (mistral_seg.get('start', 0) <= diar_seg['start'] < mistral_seg.get('end', float('inf'))):
+                        matching_mistral = mistral_seg
+                        break
+                
+                transcriptions.append({
+                    "start": diar_seg['start'],
+                    "end": diar_seg['end'],
+                    "speaker": diar_seg['speaker'],
+                    "text": matching_mistral.get('text', '') if matching_mistral else ''
+                })
+            
+            return transcriptions
             
         except Exception as e:
             logger.error(f"Erreur lors de la transcription du batch: {str(e)}", exc_info=True)

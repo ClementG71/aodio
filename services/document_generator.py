@@ -178,7 +178,7 @@ class DocumentGenerator:
                              speaker_mapping: Dict[str, str], date_seance: str,
                              output_path: Path) -> Path:
         """Génère le fichier PDF des minutes"""
-        doc = SimpleDocTemplate(str(output_path), pagesize=A4)
+        doc = SimpleDocTemplate(str(output_path), pagesize=A4, title="Minutes de la réunion")
         story = []
         
         # Styles
@@ -249,7 +249,7 @@ class DocumentGenerator:
     def _generate_pre_cr_pdf(self, pre_cr: str, date_seance: str,
                             output_path: Path) -> Path:
         """Génère le fichier PDF du pré-compte rendu"""
-        doc = SimpleDocTemplate(str(output_path), pagesize=A4)
+        doc = SimpleDocTemplate(str(output_path), pagesize=A4, title="Pré-compte rendu de la réunion")
         story = []
         
         title_style = ParagraphStyle(
@@ -345,7 +345,7 @@ class DocumentGenerator:
     def _generate_decisions_pdf(self, decisions: List[Dict[str, Any]], date_seance: str,
                                output_path: Path) -> Path:
         """Génère le fichier PDF du relevé des décisions"""
-        doc = SimpleDocTemplate(str(output_path), pagesize=A4)
+        doc = SimpleDocTemplate(str(output_path), pagesize=A4, title="Relevé des décisions")
         story = []
         
         title_style = ParagraphStyle(
