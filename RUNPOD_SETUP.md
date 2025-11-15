@@ -34,17 +34,36 @@ Ce guide vous explique étape par étape comment créer et configurer un endpoin
 ### 2.2 Créer un nouvel endpoint
 
 1. Cliquez sur "New Endpoint"
-2. Remplissez les informations :
+2. Vous avez le choix entre 3 options :
+   - **Git** : Si vous avez déjà un repository GitHub avec le code
+   - **Docker** : Si vous voulez utiliser une image Docker existante
+   - **Template** : Templates pré-configurés (non utilisé ici)
 
-   **Nom** : `pyannote-diarization` (ou un nom de votre choix)
-   
-   **GPU Type** : Sélectionnez un GPU avec au moins 16 GB de VRAM
-   - Recommandé : `NVIDIA RTX 3090` ou `NVIDIA A100`
-   - Minimum : `NVIDIA RTX 3080` (16 GB)
-   
-   **Container Image** : `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel`
-   
-   **Docker Command** : Laissez vide pour l'instant
+#### Option recommandée : Git (si vous avez un repo GitHub)
+
+Si vous avez déjà créé un repository GitHub avec le dossier `runpod_worker/` :
+
+1. **Sélectionnez "Git"**
+2. Remplissez :
+   - **Nom** : `pyannote-diarization`
+   - **GPU Type** : RTX 3090 ou A100 (minimum 16 GB VRAM)
+   - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/VotreNom/aodio`)
+   - **Branch** : `main` (ou votre branche)
+   - **Dockerfile Path** : `runpod_worker/Dockerfile`
+   - **Handler Path** : `runpod_worker/handler.py`
+   - **Container Disk** : 20 GB
+
+#### Option alternative : Docker (code inline)
+
+Si vous préférez coller le code directement dans RunPod :
+
+1. **Sélectionnez "Docker"**
+2. Remplissez :
+   - **Nom** : `pyannote-diarization`
+   - **GPU Type** : RTX 3090 ou A100 (minimum 16 GB VRAM)
+   - **Docker Image** : `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel`
+   - **Container Disk** : 20 GB
+   - **Handler Path** : `/app/handler.py` (sera configuré après)
 
 ### 2.3 Configurer les variables d'environnement
 
@@ -56,9 +75,13 @@ HF_TOKEN=votre-token-huggingface-ici
 
 Remplacez `votre-token-huggingface-ici` par le token créé à l'étape 1.2.
 
-### 2.4 Configurer le handler
+### 2.4 Note importante
 
-Dans la section "Handler", vous devrez uploader le code du worker (voir étape 3).
+Pour le déploiement du code, vous avez deux options :
+- **Option A (Recommandée)** : Utiliser un repository Git (voir étape 4)
+- **Option B** : Utiliser le code inline dans l'interface RunPod
+
+Nous recommandons l'Option A car elle est plus maintenable.
 
 ## 💻 Étape 3 : Code du worker
 
@@ -234,32 +257,61 @@ CMD ["python", "handler.py"]
 
 ### Option A : Déploiement via GitHub (recommandé)
 
-1. Créez un repository GitHub avec les fichiers :
-   - `handler.py`
-   - `requirements.txt`
-   - `Dockerfile`
+1. **Créer un repository GitHub** :
+   - Créez un nouveau repository sur GitHub
+   - Uploadez les fichiers du dossier `runpod_worker/` :
+     - `handler.py`
+     - `requirements.txt`
+     - `Dockerfile`
 
-2. Dans RunPod, dans la section "Git Repository" :
-   - Collez l'URL de votre repository
-   - Sélectionnez la branche (généralement `main`)
+2. **Dans RunPod, lors de la création de l'endpoint** :
+   - Si vous avez choisi l'option "Git" au lieu de "Docker" :
+     - Collez l'URL de votre repository GitHub
+     - Sélectionnez la branche (généralement `main`)
+     - Spécifiez le Dockerfile path : `runpod_worker/Dockerfile`
+     - Spécifiez le Handler path : `runpod_worker/handler.py`
    - RunPod construira automatiquement l'image Docker
+
+3. **Si vous avez déjà créé l'endpoint avec Docker** :
+   - Vous pouvez modifier l'endpoint après création
+   - Allez dans les paramètres de l'endpoint
+   - Changez la source vers "Git" et suivez les étapes ci-dessus
 
 ### Option B : Déploiement via Docker Hub
 
-1. Construisez l'image Docker localement :
+1. **Construire l'image Docker localement** :
    ```bash
+   cd runpod_worker
    docker build -t votre-nom/pyannote-worker:latest .
    docker push votre-nom/pyannote-worker:latest
    ```
 
-2. Dans RunPod, dans la section "Container Image" :
-   - Entrez : `votre-nom/pyannote-worker:latest`
+2. **Dans RunPod** :
+   - Lors de la création, choisissez "Docker"
+   - Dans "Docker Image", entrez : `votre-nom/pyannote-worker:latest`
+   - Handler path : `/app/handler.py`
 
-### Option C : Déploiement via code inline
+### Option C : Déploiement via code inline (plus simple mais moins maintenable)
 
-1. Dans RunPod, allez dans "Handler"
-2. Collez le code de `handler.py`
-3. Dans "Requirements", collez le contenu de `requirements.txt`
+**Note** : Cette option est utile si vous n'avez pas de repository GitHub ou si vous voulez tester rapidement.
+
+1. **Dans RunPod, lors de la création de l'endpoint** :
+   - Choisissez "Docker"
+   - Docker Image : `runpod/pytorch:2.1.0-py3.10-cuda11.8.0-devel`
+   - Créez l'endpoint (vous le configurerez après)
+   
+2. **Après la création, modifiez l'endpoint** :
+   - Allez dans les paramètres de votre endpoint (icône ⚙️)
+   - Section "Handler" :
+     - Collez le code complet de `runpod_worker/handler.py` dans le champ "Handler Code"
+   - Section "Requirements" :
+     - Collez le contenu de `runpod_worker/requirements.txt`
+   - Section "Docker Command" :
+     - Ajoutez cette commande pour installer les dépendances système et Python :
+     ```bash
+     apt-get update && apt-get install -y ffmpeg libsndfile1 && pip install --no-cache-dir -r /requirements.txt && python /handler.py
+     ```
+   - **Important** : Dans cette configuration, le handler doit être à la racine `/handler.py` et requirements à `/requirements.txt`
 
 ## ✅ Étape 5 : Tester l'endpoint
 
