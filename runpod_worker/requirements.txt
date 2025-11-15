@@ -1,0 +1,6 @@
+runpod>=1.0.0
+pyannote.audio==4.0.1
+torch>=2.2.0
+torchaudio>=2.2.0
+requests>=2.31.0
+
