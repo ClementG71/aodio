@@ -46,8 +46,14 @@ source venv/bin/activate  # Sur Windows: venv\Scripts\activate
 
 3. Installer les dépendances :
 ```bash
+# Pour l'application Flask (Railway)
 pip install -r requirements.txt
+
+# Pour le worker RunPod (si vous développez le worker)
+pip install -r requirements-worker.txt
 ```
+
+**Note** : `requirements.txt` est optimisé pour Railway (sans PyTorch/Pyannote, ~500 MB). `requirements-worker.txt` contient toutes les dépendances nécessaires pour le worker RunPod (~3.5 GB avec PyTorch).
 
 4. Configurer les variables d'environnement :
 ```bash
@@ -118,7 +124,8 @@ Tous les documents sont préfixés par la date de la séance au format `YYYYMMDD
 ```
 aodio/
 ├── app.py                 # Application Flask principale
-├── requirements.txt       # Dépendances Python
+├── requirements.txt       # Dépendances Python (Railway - sans PyTorch)
+├── requirements-worker.txt  # Dépendances pour le worker RunPod (avec PyTorch)
 ├── Procfile              # Configuration Railway
 ├── railway.json          # Configuration Railway
 ├── services/            # Services de traitement
