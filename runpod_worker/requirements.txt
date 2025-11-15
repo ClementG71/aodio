@@ -1,6 +1,12 @@
+# Dépendances légères d'abord (pour meilleur cache)
 runpod>=1.0.0
-pyannote.audio==4.0.1
-torch>=2.2.0
-torchaudio>=2.2.0
 requests>=2.31.0
+
+# PyTorch - l'image de base a déjà PyTorch 2.1.0
+# On spécifie seulement si besoin d'une version plus récente
+# torch>=2.1.0  # Décommenter si besoin d'une version spécifique
+# torchaudio>=2.1.0  # Décommenter si besoin d'une version spécifique
+
+# Pyannote (lourd, installe en dernier)
+pyannote.audio==4.0.1
 
