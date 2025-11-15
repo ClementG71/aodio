@@ -79,8 +79,8 @@ SECRET_KEY=your-secret-key-here
 ANTHROPIC_API_KEY=your-anthropic-api-key
 RUNPOD_API_KEY=your-runpod-api-key
 RUNPOD_ENDPOINT_ID=your-runpod-endpoint-id
-VOXTRAL_API_KEY=your-voxtral-api-key
-VOXTRAL_ENDPOINT=https://api.voxtral.com/v1
+MISTRAL_API_KEY=your-mistral-api-key
+MISTRAL_ENDPOINT=https://api.mistral.ai/v1
 ```
 
 ### Configuration RunPod

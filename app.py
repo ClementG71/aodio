@@ -42,8 +42,8 @@ app.config['LOGS_FOLDER'] = LOGS_FOLDER
 app.config['ANTHROPIC_API_KEY'] = os.getenv('ANTHROPIC_API_KEY')
 app.config['RUNPOD_API_KEY'] = os.getenv('RUNPOD_API_KEY')
 app.config['RUNPOD_ENDPOINT_ID'] = os.getenv('RUNPOD_ENDPOINT_ID')
-app.config['VOXTRAL_API_KEY'] = os.getenv('VOXTRAL_API_KEY')
-app.config['VOXTRAL_ENDPOINT'] = os.getenv('VOXTRAL_ENDPOINT', 'https://api.voxtral.com/v1')
+app.config['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY')
+app.config['MISTRAL_ENDPOINT'] = os.getenv('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1')
 
 # Logging
 logging.basicConfig(
