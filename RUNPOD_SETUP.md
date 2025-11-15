@@ -257,25 +257,27 @@ CMD ["python", "handler.py"]
 
 ### Option A : Déploiement via GitHub (recommandé)
 
-1. **Créer un repository GitHub** :
-   - Créez un nouveau repository sur GitHub
-   - Uploadez les fichiers du dossier `runpod_worker/` :
-     - `handler.py`
-     - `requirements.txt`
-     - `Dockerfile`
+**Note importante** : Le Dockerfile est configuré pour fonctionner depuis la racine du repo. Si vous utilisez votre repo `aodio` existant, c'est parfait !
 
-2. **Dans RunPod, lors de la création de l'endpoint** :
-   - Si vous avez choisi l'option "Git" au lieu de "Docker" :
-     - Collez l'URL de votre repository GitHub
-     - Sélectionnez la branche (généralement `main`)
-     - Spécifiez le Dockerfile path : `runpod_worker/Dockerfile`
-     - Spécifiez le Handler path : `runpod_worker/handler.py`
+1. **Dans RunPod, lors de la création de l'endpoint** :
+   - Sélectionnez l'option **"Git"**
+   - Remplissez :
+     - **Repository URL** : `https://github.com/ClementG71/aodio`
+     - **Branch** : `main`
+     - **Dockerfile Path** : `runpod_worker/Dockerfile`
+     - **Handler Path** : `runpod_worker/handler.py`
    - RunPod construira automatiquement l'image Docker
 
-3. **Si vous avez déjà créé l'endpoint avec Docker** :
-   - Vous pouvez modifier l'endpoint après création
-   - Allez dans les paramètres de l'endpoint
-   - Changez la source vers "Git" et suivez les étapes ci-dessus
+2. **Le Dockerfile est déjà configuré** pour copier les fichiers depuis `runpod_worker/` :
+   ```dockerfile
+   COPY runpod_worker/requirements.txt ./requirements.txt
+   COPY runpod_worker/handler.py ./handler.py
+   ```
+
+3. **Si vous préférez créer un repo séparé** (optionnel) :
+   - Créez un nouveau repository GitHub
+   - Copiez uniquement le contenu du dossier `runpod_worker/` à la racine
+   - Dans ce cas, utilisez `Dockerfile` (sans le préfixe `runpod_worker/`)
 
 ### Option B : Déploiement via Docker Hub
 
