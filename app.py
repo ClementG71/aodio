@@ -14,7 +14,11 @@ import logging
 from dotenv import load_dotenv
 
 # Chargement des variables d'environnement
-load_dotenv()
+# Charge .env.local en priorité pour le développement local, puis .env
+if Path('.env.local').exists():
+    load_dotenv('.env.local')
+else:
+    load_dotenv()
 
 # Configuration
 UPLOAD_FOLDER = 'uploads'
