@@ -59,6 +59,7 @@ logger = logging.getLogger(__name__)
 # Import des modules
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
+from services.mistral_voxtral import MistralVoxtralClient
 from services.llm_processor import LLMProcessor
 from services.document_generator import DocumentGenerator
 from services.log_manager import LogManager
@@ -176,10 +177,16 @@ def process_audio_pipeline(session_id, metadata):
     """Pipeline complet de traitement audio"""
     # Initialisation des services
     log_manager = LogManager(LOGS_FOLDER)
+    
+    # RunPod uniquement pour Pyannote (diarisation)
     runpod_worker = RunPodWorker(
         api_key=app.config['RUNPOD_API_KEY'],
         endpoint_id=app.config['RUNPOD_ENDPOINT_ID']
     )
+    
+    # API Mistral AI directement pour Voxtral (transcription)
+    mistral_client = MistralVoxtralClient(api_key=app.config.get('MISTRAL_API_KEY'))
+    
     llm_processor = LLMProcessor(api_key=app.config['ANTHROPIC_API_KEY'])
     document_generator = DocumentGenerator()
     
@@ -191,11 +198,13 @@ def process_audio_pipeline(session_id, metadata):
         diarization_result = runpod_worker.diarize_audio(metadata['processed_audio'])
         log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
         
-        # 2. Transcription avec Voxtral
+        # 2. Transcription avec Voxtral (directement via API Mistral AI)
         log_manager.log_status(session_id, 'transcription', 'Démarrage de la transcription')
-        transcription_result = runpod_worker.transcribe_audio(
-            metadata['processed_audio'],
-            diarization_result
+        diarization_segments = diarization_result.get('segments', [])
+        transcription_result = mistral_client.transcribe_audio(
+            audio_path=metadata['processed_audio'],
+            diarization_segments=diarization_segments,
+            language="fr"
         )
         log_manager.log_status(session_id, 'transcription', 'Transcription terminée', transcription_result)
         

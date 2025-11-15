@@ -80,15 +80,22 @@ ANTHROPIC_API_KEY=your-anthropic-api-key
 RUNPOD_API_KEY=your-runpod-api-key
 RUNPOD_ENDPOINT_ID=your-runpod-endpoint-id
 MISTRAL_API_KEY=your-mistral-api-key
-MISTRAL_ENDPOINT=https://api.mistral.ai/v1
 ```
 
-### Configuration RunPod
+**Note** : `MISTRAL_ENDPOINT` n'est pas nécessaire (valeur par défaut utilisée).
 
-Le worker RunPod doit être configuré pour :
-- Exécuter Pyannote 4.0.1 pour la diarisation
-- Appeler Voxtral-small-latest pour la transcription
-- Accepter les requêtes avec les segments de diarisation
+### Architecture
+
+L'application utilise une architecture hybride optimisée :
+
+- **Pyannote (Diarisation)** : Exécuté sur RunPod (nécessite GPU)
+  - Le worker RunPod doit être configuré pour exécuter Pyannote 4.0.1
+  - Voir `RUNPOD_SETUP.md` pour la configuration du worker
+
+- **Voxtral (Transcription)** : Appel direct à l'API Mistral AI
+  - Pas besoin de vLLM sur RunPod
+  - Utilise l'API officielle Mistral AI (`voxtral-small-latest`)
+  - Plus simple à maintenir et à déployer
 
 ### Déploiement sur Railway
 
