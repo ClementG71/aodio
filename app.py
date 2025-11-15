@@ -46,14 +46,28 @@ app.config['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY')
 app.config['MISTRAL_ENDPOINT'] = os.getenv('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1')
 
 # Logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler(f'{LOGS_FOLDER}/app.log'),
-        logging.StreamHandler()
-    ]
-)
+# Créer le dossier logs s'il n'existe pas
+Path(LOGS_FOLDER).mkdir(exist_ok=True)
+
+# Configuration du logging avec gestion d'erreur pour le fichier
+try:
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[
+            logging.FileHandler(f'{LOGS_FOLDER}/app.log'),
+            logging.StreamHandler()
+        ]
+    )
+except Exception as e:
+    # Si l'écriture dans le fichier échoue, utiliser seulement StreamHandler
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        handlers=[logging.StreamHandler()]
+    )
+    print(f"Warning: Impossible d'écrire dans le fichier de log: {e}")
+
 logger = logging.getLogger(__name__)
 
 # Import des modules
@@ -78,6 +92,15 @@ def allowed_file(filename):
 def index():
     """Page d'accueil avec formulaire d'upload"""
     return render_template('index.html')
+
+
+@app.route('/health')
+def health():
+    """Route de santé pour vérifier que l'application fonctionne"""
+    return jsonify({
+        'status': 'ok',
+        'message': 'Application Aodio is running'
+    }), 200
 
 
 @app.route('/upload', methods=['POST'])
