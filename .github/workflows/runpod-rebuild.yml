@@ -33,40 +33,77 @@ jobs:
           
           # Pour déclencher un rebuild, on doit récupérer les infos de l'endpoint
           # et les renvoyer pour forcer une mise à jour (rolling release)
-          echo "Récupération des informations de l'endpoint..."
+          echo "Récupération des informations de l'endpoint via REST API..."
           
-          # Récupérer les infos via GraphQL
-          endpoint_query=$(curl -s -X POST \
-            "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
-            -H "Content-Type: application/json" \
-            -d "{\"query\": \"query { endpoint(id: \\\"${RUNPOD_ENDPOINT_ID}\\\") { id name templateId gpuIds workersMin workersMax scalerType scalerValue idleTimeout } }\"}")
+          # Récupérer les infos via REST API (plus fiable que GraphQL)
+          endpoint_info=$(curl -s -w "\n%{http_code}" \
+            "https://rest.runpod.io/v1/serverless/${RUNPOD_ENDPOINT_ID}" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}")
           
-          echo "Réponse GraphQL (infos endpoint): $endpoint_query"
+          endpoint_http_code=$(echo "$endpoint_info" | tail -n1)
+          endpoint_body=$(echo "$endpoint_info" | sed '$d')
           
-          # Extraire les valeurs nécessaires
-          template_id=$(echo "$endpoint_query" | grep -o '"templateId":"[^"]*"' | cut -d'"' -f4 || echo "")
-          endpoint_name=$(echo "$endpoint_query" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || echo "aodio-endpoint")
-          gpu_ids=$(echo "$endpoint_query" | grep -o '"gpuIds":"[^"]*"' | cut -d'"' -f4 || echo "")
-          workers_min=$(echo "$endpoint_query" | grep -o '"workersMin":[0-9]*' | cut -d':' -f2 || echo "0")
-          workers_max=$(echo "$endpoint_query" | grep -o '"workersMax":[0-9]*' | cut -d':' -f2 || echo "1")
+          if [ "$endpoint_http_code" -ne 200 ]; then
+            echo "❌ Erreur lors de la récupération de l'endpoint (HTTP $endpoint_http_code)"
+            echo "Réponse: $endpoint_body"
+            exit 1
+          fi
+          
+          echo "Réponse REST (infos endpoint): $endpoint_body"
+          
+          # Extraire les valeurs nécessaires avec jq si disponible, sinon avec grep
+          if command -v jq &> /dev/null; then
+            template_id=$(echo "$endpoint_body" | jq -r '.templateId // empty')
+            endpoint_name=$(echo "$endpoint_body" | jq -r '.name // "aodio-endpoint"')
+            gpu_type_ids=$(echo "$endpoint_body" | jq -r '.gpuTypeIds[]? // empty' | tr '\n' ',' | sed 's/,$//')
+            workers_min=$(echo "$endpoint_body" | jq -r '.workersMin // 0')
+            workers_max=$(echo "$endpoint_body" | jq -r '.workersMax // 1')
+            scaler_type=$(echo "$endpoint_body" | jq -r '.scalerType // "QUEUE_DELAY"')
+            scaler_value=$(echo "$endpoint_body" | jq -r '.scalerValue // 4')
+            idle_timeout=$(echo "$endpoint_body" | jq -r '.idleTimeout // 5')
+          else
+            # Fallback sans jq
+            template_id=$(echo "$endpoint_body" | grep -o '"templateId":"[^"]*"' | cut -d'"' -f4 || echo "")
+            endpoint_name=$(echo "$endpoint_body" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || echo "aodio-endpoint")
+            gpu_type_ids=$(echo "$endpoint_body" | grep -o '"gpuTypeIds":\[[^]]*\]' | grep -o '"[^"]*"' | tr '\n' ',' | sed 's/,$//' || echo "")
+            workers_min=$(echo "$endpoint_body" | grep -o '"workersMin":[0-9]*' | cut -d':' -f2 || echo "0")
+            workers_max=$(echo "$endpoint_body" | grep -o '"workersMax":[0-9]*' | cut -d':' -f2 || echo "1")
+            scaler_type=$(echo "$endpoint_body" | grep -o '"scalerType":"[^"]*"' | cut -d'"' -f4 || echo "QUEUE_DELAY")
+            scaler_value=$(echo "$endpoint_body" | grep -o '"scalerValue":[0-9]*' | cut -d':' -f2 || echo "4")
+            idle_timeout=$(echo "$endpoint_body" | grep -o '"idleTimeout":[0-9]*' | cut -d':' -f2 || echo "5")
+          fi
           
           if [ -z "$template_id" ]; then
             echo "❌ Impossible de récupérer le templateId de l'endpoint"
-            echo "Réponse GraphQL: $endpoint_query"
+            echo "Réponse: $endpoint_body"
             exit 1
           fi
           
           echo "Endpoint: $endpoint_name"
           echo "Template ID: $template_id"
           echo "Workers: min=$workers_min, max=$workers_max"
+          echo "Scaler: type=$scaler_type, value=$scaler_value"
           
           # Méthode 1: Utiliser GraphQL pour mettre à jour avec les mêmes paramètres
           # Cela déclenche un rolling release qui rebuild l'endpoint
           echo "Mise à jour de l'endpoint via GraphQL pour déclencher le rebuild..."
+          
+          # Construire la requête GraphQL avec les paramètres récupérés
+          # Note: gpuIds dans GraphQL est une string, pas un array
+          gpu_ids_for_graphql=$(echo "$gpu_type_ids" | cut -d',' -f1 || echo "")
+          
+          graphql_mutation="mutation { saveEndpoint(input: { id: \\\"${RUNPOD_ENDPOINT_ID}\\\", name: \\\"${endpoint_name}\\\", templateId: \\\"${template_id}\\\""
+          
+          if [ -n "$gpu_ids_for_graphql" ]; then
+            graphql_mutation="${graphql_mutation}, gpuIds: \\\"${gpu_ids_for_graphql}\\\""
+          fi
+          
+          graphql_mutation="${graphql_mutation}, workersMin: ${workers_min}, workersMax: ${workers_max}, scalerType: \\\"${scaler_type}\\\", scalerValue: ${scaler_value}, idleTimeout: ${idle_timeout} }) { id name templateId } }"
+          
           graphql_response=$(curl -s -w "\n%{http_code}" -X POST \
             "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"query\": \"mutation { saveEndpoint(input: { id: \\\"${RUNPOD_ENDPOINT_ID}\\\", name: \\\"${endpoint_name}\\\", templateId: \\\"${template_id}\\\", gpuIds: \\\"${gpu_ids}\\\", workersMin: ${workers_min}, workersMax: ${workers_max} }) { id name templateId } }\"}")
+            -d "{\"query\": \"${graphql_mutation}\"}")
           
           graphql_http_code=$(echo "$graphql_response" | tail -n1)
           graphql_body=$(echo "$graphql_response" | sed '$d')
@@ -79,11 +116,14 @@ jobs:
             echo "Réponse GraphQL: $graphql_body"
             
             # Méthode 2: Fallback sur REST API avec les paramètres récupérés
-            rest_response=$(curl -s -w "\n%{http_code}" -X PATCH \
+            # PUT /v1/endpoints/{endpointId} déclenche un rolling release
+            rest_update_body="{\"templateId\": \"${template_id}\", \"workersMin\": ${workers_min}, \"workersMax\": ${workers_max}}"
+            
+            rest_response=$(curl -s -w "\n%{http_code}" -X PUT \
               "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}" \
               -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
               -H "Content-Type: application/json" \
-              -d "{\"templateId\": \"${template_id}\", \"workersMin\": ${workers_min}, \"workersMax\": ${workers_max}}")
+              -d "$rest_update_body")
             
             rest_http_code=$(echo "$rest_response" | tail -n1)
             rest_body=$(echo "$rest_response" | sed '$d')
