@@ -31,48 +31,62 @@ jobs:
             exit 1
           fi
           
-          # Méthode 1: Utiliser l'API GraphQL RunPod (plus fiable selon la doc)
-          # La mutation saveEndpoint avec forceUpdateTemplate déclenche un rebuild
-          echo "Tentative avec l'API GraphQL..."
-          graphql_response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
+          # Méthode 1: Utiliser l'API REST RunPod (plus simple et fiable)
+          # PATCH /v1/endpoints/{endpointId} déclenche un rolling release
+          echo "Tentative avec l'API REST..."
+          rest_response=$(curl -s -w "\n%{http_code}" -X PATCH \
+            "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d "{\"query\": \"mutation { saveEndpoint(input: { id: \\\"${RUNPOD_ENDPOINT_ID}\\\", forceUpdateTemplate: true }) { id } }\"}")
+            -d '{}')
           
-          graphql_http_code=$(echo "$graphql_response" | tail -n1)
-          graphql_body=$(echo "$graphql_response" | sed '$d')
+          rest_http_code=$(echo "$rest_response" | tail -n1)
+          rest_body=$(echo "$rest_response" | sed '$d')
           
-          if [ "$graphql_http_code" -eq 200 ]; then
-            # Vérifier si la réponse GraphQL contient des erreurs
-            if echo "$graphql_body" | grep -q '"errors"'; then
-              echo "⚠️ GraphQL a retourné des erreurs, tentative avec REST API..."
-              # Méthode 2: Fallback sur REST API
-              rest_response=$(curl -s -w "\n%{http_code}" -X PATCH \
-                "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}" \
-                -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
-                -H "Content-Type: application/json" \
-                -d '{"forceUpdateTemplate": true}')
-              
-              rest_http_code=$(echo "$rest_response" | tail -n1)
-              rest_body=$(echo "$rest_response" | sed '$d')
-              
-              if [ "$rest_http_code" -eq 200 ] || [ "$rest_http_code" -eq 201 ]; then
-                echo "✅ Rebuild déclenché avec succès via REST API!"
-                echo "Réponse: $rest_body"
-              else
-                echo "❌ Erreur REST API (HTTP $rest_http_code)"
-                echo "Réponse: $rest_body"
-                echo "Réponse GraphQL: $graphql_body"
-                exit 1
-              fi
-            else
+          if [ "$rest_http_code" -eq 200 ] || [ "$rest_http_code" -eq 201 ]; then
+            echo "✅ Rebuild déclenché avec succès via REST API!"
+            echo "Réponse: $rest_body"
+          else
+            echo "⚠️ REST API a échoué (HTTP $rest_http_code), tentative avec GraphQL..."
+            echo "Réponse REST: $rest_body"
+            
+            # Méthode 2: Fallback sur GraphQL - récupérer d'abord les infos de l'endpoint
+            echo "Récupération des informations de l'endpoint..."
+            endpoint_info=$(curl -s -X POST \
+              "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\": \"query { endpoint(id: \\\"${RUNPOD_ENDPOINT_ID}\\\") { id name templateId gpuIds workersMin workersMax } }\"}")
+            
+            # Extraire les valeurs nécessaires (simplifié - on utilise juste l'ID et le templateId)
+            # Pour forcer un rebuild, on met à jour avec les mêmes paramètres
+            template_id=$(echo "$endpoint_info" | grep -o '"templateId":"[^"]*"' | cut -d'"' -f4 || echo "")
+            endpoint_name=$(echo "$endpoint_info" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 || echo "aodio-endpoint")
+            
+            if [ -z "$template_id" ]; then
+              echo "❌ Impossible de récupérer le templateId de l'endpoint"
+              echo "Réponse GraphQL: $endpoint_info"
+              exit 1
+            fi
+            
+            echo "Utilisation du templateId: $template_id"
+            
+            # Mettre à jour l'endpoint avec les mêmes paramètres pour forcer un rebuild
+            graphql_response=$(curl -s -w "\n%{http_code}" -X POST \
+              "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
+              -H "Content-Type: application/json" \
+              -d "{\"query\": \"mutation { saveEndpoint(input: { id: \\\"${RUNPOD_ENDPOINT_ID}\\\", name: \\\"${endpoint_name}\\\", templateId: \\\"${template_id}\\\" }) { id name templateId } }\"}")
+            
+            graphql_http_code=$(echo "$graphql_response" | tail -n1)
+            graphql_body=$(echo "$graphql_response" | sed '$d')
+            
+            if [ "$graphql_http_code" -eq 200 ] && ! echo "$graphql_body" | grep -q '"errors"'; then
               echo "✅ Rebuild déclenché avec succès via GraphQL!"
               echo "Réponse: $graphql_body"
+            else
+              echo "❌ Erreur GraphQL (HTTP $graphql_http_code)"
+              echo "Réponse: $graphql_body"
+              exit 1
             fi
-          else
-            echo "❌ Erreur GraphQL (HTTP $graphql_http_code)"
-            echo "Réponse: $graphql_body"
-            exit 1
           fi
 
       - name: Wait for deployment
