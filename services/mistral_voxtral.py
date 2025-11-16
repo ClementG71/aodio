@@ -4,8 +4,10 @@ Alternative au worker RunPod si vous préférez appeler directement Mistral AI
 """
 import os
 import logging
+import time
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
+from mistralai.models import SDKError
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,7 @@ class MistralVoxtralClient:
                         diarization_segments: List[Dict[str, Any]],
                         language: str = "fr") -> Dict[str, Any]:
         """
-        Transcrit un fichier audio avec Voxtral-small-latest
+        Transcrit un fichier audio avec Voxtral Mini (voxtral-mini-latest)
         
         Args:
             audio_path: Chemin du fichier audio local
@@ -45,21 +47,25 @@ class MistralVoxtralClient:
         Returns:
             dict: Transcription avec segments mappés aux speakers
         """
-        try:
-            logger.info(f"Transcription avec Voxtral-small-latest: {audio_path}")
-            
-            # Transcription avec timestamps de segments
-            with open(audio_path, "rb") as f:
-                transcription_response = self.client.audio.transcriptions.complete(
-                    model=self.model,
-                    file={
-                        "content": f,
-                        "file_name": os.path.basename(audio_path)
-                    },
-                    language=language,
-                    temperature=0.0,  # Déterministe
-                    timestamp_granularities=["segment"]  # Pour obtenir start/end
-                )
+        max_retries = 3
+        retry_delay = 5  # secondes
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Transcription avec {self.model} (tentative {attempt + 1}/{max_retries}): {audio_path}")
+                
+                # Transcription avec timestamps de segments
+                with open(audio_path, "rb") as f:
+                    transcription_response = self.client.audio.transcriptions.complete(
+                        model=self.model,
+                        file={
+                            "content": f,
+                            "file_name": os.path.basename(audio_path)
+                        },
+                        language=language,
+                        temperature=0.0,  # Déterministe
+                        timestamp_granularities=["segment"]  # Pour obtenir start/end
+                    )
             
             # Format de réponse Mistral AI:
             # {
@@ -112,7 +118,7 @@ class MistralVoxtralClient:
                                   diarization_segments: List[Dict[str, Any]],
                                   language: str = "fr") -> Dict[str, Any]:
         """
-        Transcrit un fichier audio depuis une URL avec Voxtral-small-latest
+        Transcrit un fichier audio depuis une URL avec Voxtral Mini (voxtral-mini-latest)
         
         Args:
             audio_url: URL du fichier audio
@@ -122,17 +128,21 @@ class MistralVoxtralClient:
         Returns:
             dict: Transcription avec segments mappés aux speakers
         """
-        try:
-            logger.info(f"Transcription depuis URL avec Voxtral-small-latest: {audio_url}")
-            
-            # Transcription avec timestamps de segments
-            transcription_response = self.client.audio.transcriptions.complete(
-                model=self.model,
-                file_url=audio_url,
-                language=language,
-                temperature=0.0,  # Déterministe
-                timestamp_granularities=["segment"]  # Pour obtenir start/end
-            )
+        max_retries = 3
+        retry_delay = 5  # secondes
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Transcription depuis URL avec {self.model} (tentative {attempt + 1}/{max_retries}): {audio_url}")
+                
+                # Transcription avec timestamps de segments
+                transcription_response = self.client.audio.transcriptions.complete(
+                    model=self.model,
+                    file_url=audio_url,
+                    language=language,
+                    temperature=0.0,  # Déterministe
+                    timestamp_granularities=["segment"]  # Pour obtenir start/end
+                )
             
             # Même logique de mapping que transcribe_audio
             mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
