@@ -21,15 +21,26 @@ else:
     load_dotenv()
 
 # Configuration
-UPLOAD_FOLDER = 'uploads'
-PROCESSED_FOLDER = 'processed'
-LOGS_FOLDER = 'logs'
+# Utiliser le volume Railway si disponible, sinon utiliser le dossier local
+# Le volume Railway peut être monté via la variable d'environnement RAILWAY_VOLUME_MOUNT_PATH
+VOLUME_PATH = os.getenv('RAILWAY_VOLUME_MOUNT_PATH')
+if VOLUME_PATH and Path(VOLUME_PATH).exists():
+    # Utiliser le volume Railway pour le stockage persistant
+    UPLOAD_FOLDER = str(Path(VOLUME_PATH) / 'uploads')
+    PROCESSED_FOLDER = str(Path(VOLUME_PATH) / 'processed')
+    LOGS_FOLDER = str(Path(VOLUME_PATH) / 'logs')
+else:
+    # Fallback sur le système de fichiers local
+    UPLOAD_FOLDER = 'uploads'
+    PROCESSED_FOLDER = 'processed'
+    LOGS_FOLDER = 'logs'
+
 ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
 MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
 
 # Création des dossiers nécessaires
 for folder in [UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER]:
-    Path(folder).mkdir(exist_ok=True)
+    Path(folder).mkdir(parents=True, exist_ok=True)
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key-change-in-production')
@@ -47,9 +58,10 @@ app.config['MISTRAL_ENDPOINT'] = os.getenv('MISTRAL_ENDPOINT', 'https://api.mist
 
 # Logging
 # Créer le dossier logs s'il n'existe pas
-Path(LOGS_FOLDER).mkdir(exist_ok=True)
+Path(LOGS_FOLDER).mkdir(parents=True, exist_ok=True)
 
 # Configuration du logging avec gestion d'erreur pour le fichier
+# Utilise LOGS_FOLDER qui peut être sur le volume Railway
 try:
     logging.basicConfig(
         level=logging.INFO,
@@ -59,6 +71,8 @@ try:
             logging.StreamHandler()
         ]
     )
+    if VOLUME_PATH and Path(VOLUME_PATH).exists():
+        logging.info(f"Utilisation du volume Railway: {VOLUME_PATH}")
 except Exception as e:
     # Si l'écriture dans le fichier échoue, utiliser seulement StreamHandler
     logging.basicConfig(
@@ -174,24 +188,14 @@ def upload_files():
             context_files['releves_votes'] = session_folder / secure_filename(releves_votes.filename)
             releves_votes.save(context_files['releves_votes'])
         
-        # Initialisation des services
-        audio_processor = AudioProcessor()
-        
-        # Traitement de l'audio (normalisation et compression)
-        logger.info(f"Début du traitement audio pour la session {session_id}")
-        processed_audio_path = audio_processor.process_audio(
-            str(audio_path),
-            str(session_folder / 'audio_processed.wav')
-        )
-        
-        # Sauvegarde des métadonnées
+        # Sauvegarde des métadonnées initiales
         metadata = {
             'session_id': session_id,
             'date_upload': datetime.now().isoformat(),
             'president_seance': president_seance,
             'date_seance': date_seance,
             'audio_file': str(audio_path),
-            'processed_audio': processed_audio_path,
+            'processed_audio': None,  # Sera rempli après traitement audio
             'context_files': {k: str(v) for k, v in context_files.items()},
             'status': 'uploaded'
         }
@@ -200,17 +204,17 @@ def upload_files():
         with open(metadata_path, 'w', encoding='utf-8') as f:
             json.dump(metadata, f, ensure_ascii=False, indent=2)
         
-        # Démarrage du traitement asynchrone
-        # Note: En production, utiliser Celery ou un système de queue
+        # Démarrage du traitement audio asynchrone (pour fichiers longs jusqu'à 4h15)
+        # Le traitement audio est maintenant asynchrone pour éviter de bloquer la requête HTTP
         from threading import Thread
-        thread = Thread(target=process_audio_pipeline, args=(session_id, metadata))
+        thread = Thread(target=process_audio_and_pipeline, args=(session_id, metadata, str(audio_path)))
         thread.daemon = True
         thread.start()
         
         return jsonify({
             'success': True,
             'session_id': session_id,
-            'message': 'Fichiers uploadés avec succès. Traitement en cours...'
+            'message': 'Fichiers uploadés avec succès. Traitement audio en cours...'
         })
         
     except RequestEntityTooLarge:
@@ -218,6 +222,44 @@ def upload_files():
     except Exception as e:
         logger.error(f"Erreur lors de l'upload: {str(e)}", exc_info=True)
         return jsonify({'error': f'Erreur lors de l\'upload: {str(e)}'}), 500
+
+
+def process_audio_and_pipeline(session_id, metadata, audio_path):
+    """
+    Traite l'audio puis lance le pipeline complet
+    Cette fonction est exécutée de manière asynchrone pour éviter de bloquer la requête HTTP
+    """
+    try:
+        # Initialisation du service audio
+        audio_processor = AudioProcessor()
+        
+        # Traitement de l'audio (normalisation et compression)
+        logger.info(f"Début du traitement audio pour la session {session_id}")
+        processed_audio_path = audio_processor.process_audio(
+            audio_path,
+            str(Path(UPLOAD_FOLDER) / session_id / 'audio_processed.wav')
+        )
+        
+        # Mise à jour des métadonnées avec le chemin du fichier traité
+        metadata['processed_audio'] = processed_audio_path
+        metadata['status'] = 'audio_processed'
+        metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
+        with open(metadata_path, 'w', encoding='utf-8') as f:
+            json.dump(metadata, f, ensure_ascii=False, indent=2)
+        
+        logger.info(f"Traitement audio terminé pour la session {session_id}, démarrage du pipeline...")
+        
+        # Maintenant on peut lancer le pipeline complet
+        process_audio_pipeline(session_id, metadata)
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du traitement audio pour {session_id}: {str(e)}", exc_info=True)
+        # Mettre à jour le statut en cas d'erreur
+        try:
+            log_manager = LogManager(LOGS_FOLDER)
+            log_manager.log_status(session_id, 'error', f'Erreur lors du traitement audio: {str(e)}')
+        except:
+            pass
 
 
 def process_audio_pipeline(session_id, metadata):

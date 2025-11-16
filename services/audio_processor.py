@@ -51,12 +51,18 @@ class AudioProcessor:
             
             # Pour les très longs fichiers, on simplifie la normalisation
             # On utilise juste la conversion de format et le rééchantillonnage
+            # Optimisations de performance :
+            # -threads 0 : utilise tous les CPU disponibles
+            # -preset fast : équilibre vitesse/qualité
+            # -loglevel error : réduit les logs pour améliorer les performances
             cmd = [
                 'ffmpeg',
+                '-threads', '0',  # Utiliser tous les CPU disponibles
                 '-i', str(input_path),
                 '-ar', str(self.target_sample_rate),  # Sample rate 16kHz
                 '-ac', '1',  # Mono
                 '-acodec', 'pcm_s16le',  # PCM 16-bit
+                '-loglevel', 'error',  # Réduire les logs pour améliorer les performances
                 '-y',  # Overwrite output
                 str(output_path)
             ]
