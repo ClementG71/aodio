@@ -1,14 +1,16 @@
 name: Rebuild RunPod Endpoint
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - 'runpod_worker/**'
-      - '.github/workflows/runpod-rebuild.yml'
-  release:
-    types: [published, edited]
+  # Désactivé temporairement pour permettre la configuration manuelle de l'endpoint
+  # Décommentez ces lignes une fois l'endpoint configuré correctement
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - 'runpod_worker/**'
+  #     - '.github/workflows/runpod-rebuild.yml'
+  # release:
+  #   types: [published, edited]
   workflow_dispatch:  # Permet de déclencher manuellement depuis l'interface GitHub
 
 jobs:
