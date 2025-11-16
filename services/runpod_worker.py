@@ -148,6 +148,8 @@ class RunPodWorker:
                 logger.error(f"Réponse inattendue de l'API: {response_data}")
                 raise Exception(f"L'API n'a pas retourné d'ID de job. Réponse: {response_data}")
             
+            logger.info(f"Job RunPod créé avec succès. Job ID: {job_id}")
+            
             # Attente de la complétion
             result = self._wait_for_completion(job_id)
             
@@ -336,9 +338,15 @@ class RunPodWorker:
         consecutive_404 = 0
         max_consecutive_404 = 3  # Tolérer 3 erreurs 404 consécutives avant d'abandonner
         
+        check_count = 0
         while time.time() - start_time < max_wait:
+            check_count += 1
+            elapsed_time = int(time.time() - start_time)
             status_url = f"{self.base_url}/status/{job_id}"
-            logger.debug(f"Vérification du statut: {status_url}")
+            
+            # Logger toutes les 6 vérifications (environ toutes les 30 secondes) pour éviter le spam
+            if check_count % 6 == 0 or check_count <= 3:
+                logger.info(f"Vérification du statut du job {job_id} (tentative {check_count}, {elapsed_time}s écoulées)...")
             
             try:
                 response = requests.get(
@@ -367,15 +375,22 @@ class RunPodWorker:
                 response.raise_for_status()
                 
                 status = response.json()
-                logger.debug(f"Statut du job: {status.get('status')}")
+                job_status = status.get('status')
                 
-                if status.get('status') == 'COMPLETED':
+                # Logger le statut à chaque vérification (mais pas en debug)
+                if check_count % 6 == 0 or check_count <= 3 or job_status in ['COMPLETED', 'FAILED']:
+                    logger.info(f"Statut du job {job_id}: {job_status}")
+                
+                if job_status == 'COMPLETED':
                     output = status.get('output', {})
-                    logger.info(f"Job {job_id} terminé avec succès")
+                    logger.info(f"Job {job_id} terminé avec succès après {elapsed_time}s")
                     return output
-                elif status.get('status') == 'FAILED':
+                elif job_status == 'FAILED':
                     error = status.get('error', 'Erreur inconnue')
-                    error_msg = f"Job {job_id} échoué: {error}"
+                    error_details = status.get('output', {})
+                    error_msg = f"Job {job_id} échoué après {elapsed_time}s: {error}"
+                    if error_details:
+                        logger.error(f"Détails de l'erreur: {error_details}")
                     logger.error(error_msg)
                     raise Exception(error_msg)
                 
