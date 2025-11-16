@@ -108,6 +108,12 @@ Cliquez sur **"New Variable"** et ajoutez les variables suivantes **une par une*
 - **Valeur** : La clé API Mistral AI copiée à l'étape 3
 - Cliquez sur **"Add"**
 
+#### Variable 6 : RAILWAY_PUBLIC_DOMAIN (optionnel)
+
+- **Nom** : `RAILWAY_PUBLIC_DOMAIN`
+- **Valeur** : Railway définit automatiquement cette variable, mais vous pouvez la vérifier
+- **Note** : Cette variable est automatiquement définie par Railway. Si vous voulez la forcer, vous pouvez l'ajouter manuellement avec la valeur de votre domaine Railway (ex: `votre-app.railway.app`)
+
 ## ✅ Étape 6 : Vérifier la configuration
 
 ### 6.1 Vérifier que toutes les variables sont présentes

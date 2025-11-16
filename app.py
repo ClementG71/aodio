@@ -225,10 +225,22 @@ def process_audio_pipeline(session_id, metadata):
     # Initialisation des services
     log_manager = LogManager(LOGS_FOLDER)
     
+    # Déterminer l'URL de base de l'application
+    # Railway fournit RAILWAY_PUBLIC_DOMAIN, sinon utiliser request.host_url
+    app_base_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+    if app_base_url:
+        # Ajouter le protocole si absent
+        if not app_base_url.startswith('http'):
+            app_base_url = f"https://{app_base_url}"
+    else:
+        # Fallback pour développement local
+        app_base_url = os.getenv('APP_BASE_URL', 'http://localhost:5000')
+    
     # RunPod uniquement pour Pyannote (diarisation)
     runpod_worker = RunPodWorker(
         api_key=app.config['RUNPOD_API_KEY'],
-        endpoint_id=app.config['RUNPOD_ENDPOINT_ID']
+        endpoint_id=app.config['RUNPOD_ENDPOINT_ID'],
+        base_url=app_base_url
     )
     
     # API Mistral AI directement pour Voxtral (transcription)
