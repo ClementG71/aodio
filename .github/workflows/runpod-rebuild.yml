@@ -32,9 +32,10 @@ jobs:
           fi
           
           # Appeler l'API RunPod pour mettre à jour l'endpoint (déclenche un rebuild)
-          # Selon la doc RunPod, PUT /endpoints/{endpointId} déclenche un rolling release
-          response=$(curl -s -w "\n%{http_code}" -X PUT \
-            "https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}" \
+          # Selon la doc RunPod, POST /v1/endpoints/{endpointId}/update déclenche un rolling release
+          # On envoie un body vide pour déclencher juste le rebuild sans changer la config
+          response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}/update" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
             -d '{}')
