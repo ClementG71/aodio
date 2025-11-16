@@ -25,9 +25,11 @@ class MistralVoxtralClient:
             raise ValueError("MISTRAL_API_KEY doit être fourni")
         
         self.client = Mistral(api_key=self.api_key)
-        # Modèle Voxtral Small selon la documentation Mistral AI
-        # https://docs.mistral.ai/models/voxtral-small-25-07
-        self.model = "voxtral-small-2507"
+        # Pour la transcription via audio/transcriptions, utiliser voxtral-mini-latest
+        # Documentation: https://docs.mistral.ai/capabilities/audio_transcription
+        # Note: voxtral-small-latest est pour les chat completions avec audio, pas pour les transcriptions
+        # voxtral-mini-latest via audio/transcriptions = Voxtral Mini Transcribe (optimisé pour transcription)
+        self.model = "voxtral-mini-latest"
     
     def transcribe_audio(self, audio_path: str, 
                         diarization_segments: List[Dict[str, Any]],
