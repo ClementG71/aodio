@@ -407,7 +407,47 @@ curl "https://api.runpod.io/v2/VOTRE_ENDPOINT_ID/status/JOB_ID" \
   -H "Authorization: Bearer VOTRE_API_KEY"
 ```
 
-## 🔧 Étape 6 : Configuration dans l'application Flask
+## 🔧 Étape 6 : Configurer les Warm Workers (Workers toujours actifs)
+
+Par défaut, RunPod Serverless crée les workers à la demande. Pour avoir des workers toujours disponibles (recommandé pour éviter le cold start) :
+
+### 6.1 Accéder aux paramètres de l'endpoint
+
+1. Allez sur [https://www.runpod.io/console/serverless](https://www.runpod.io/console/serverless)
+2. Cliquez sur votre endpoint `aodio`
+3. Allez dans l'onglet **"Settings"** (ou cliquez sur le bouton "Manage" → "Settings")
+
+### 6.2 Configurer les Warm Workers
+
+1. Dans la section **"Worker Configuration"** ou **"Scaling"** :
+   - Trouvez **"Idle Workers"** ou **"Warm Workers"** ou **"Minimum Workers"**
+   - Définissez le nombre à **1** (ou plus si vous avez beaucoup de trafic)
+   - Cela gardera au moins 1 worker toujours actif
+
+2. **Optionnel - Max Workers** :
+   - Définissez **"Max Workers"** à 2-3 pour gérer les pics de charge
+   - Cela limite les coûts tout en permettant la scalabilité
+
+3. **Timeout des workers inactifs** :
+   - Configurez **"Idle Timeout"** (ex: 5-10 minutes)
+   - Les workers inactifs seront arrêtés après ce délai pour économiser
+
+4. Cliquez sur **"Save"** ou **"Update"**
+
+### 6.3 Vérifier que les workers démarrent
+
+1. Après avoir sauvegardé, retournez dans l'onglet **"Workers"**
+2. Vous devriez voir un worker en cours de démarrage
+3. Attendez 1-2 minutes que le worker soit **"Ready"** (statut vert)
+4. Le premier démarrage peut prendre 2-3 minutes (chargement du modèle Pyannote)
+
+### 6.4 Coûts des Warm Workers
+
+- **1 worker RTX 3090** : ~$0.29/heure = ~$7/jour si toujours actif
+- **Recommandation** : Gardez 1 warm worker pour éviter le cold start (~2-3 minutes)
+- Les workers inactifs coûtent moins cher que les workers actifs
+
+## 🔧 Étape 7 : Configuration dans l'application Flask
 
 Une fois l'endpoint testé et fonctionnel, ajoutez les variables d'environnement sur Railway :
 
