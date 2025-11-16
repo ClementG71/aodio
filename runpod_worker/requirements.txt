@@ -1,7 +1,9 @@
 # Dépendances légères d'abord (pour meilleur cache)
 runpod>=1.0.0
 requests>=2.31.0
-huggingface_hub>=0.20.0
+# pyannote.audio 3.3.1 utilise encore use_auth_token (déprécié dans huggingface_hub >= 0.20.0)
+# On utilise une version compatible qui supporte encore use_auth_token
+huggingface_hub>=0.19.0,<0.20.0
 
 # PyTorch - L'image de base a déjà PyTorch 2.5.1 avec CUDA 12.1
 # On spécifie explicitement pour éviter les réinstallations non désirées
