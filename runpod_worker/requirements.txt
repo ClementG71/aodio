@@ -1,6 +1,7 @@
 # Dépendances légères d'abord (pour meilleur cache)
 runpod>=1.0.0
 requests>=2.31.0
+huggingface_hub>=0.20.0
 
 # PyTorch - L'image de base a déjà PyTorch 2.5.1 avec CUDA 12.1
 # On spécifie explicitement pour éviter les réinstallations non désirées

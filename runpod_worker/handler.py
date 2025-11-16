@@ -14,29 +14,51 @@ from huggingface_hub import login
 DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
-# Configurer la variable d'environnement pour huggingface_hub
-# pyannote.audio 3.3.1+ utilise huggingface_hub qui lit automatiquement
-# les variables d'environnement HUGGING_FACE_HUB_TOKEN ou HF_TOKEN
-if HF_TOKEN:
-    os.environ["HUGGING_FACE_HUB_TOKEN"] = HF_TOKEN
-    # Alternative: utiliser login() pour authentifier
-    try:
-        login(token=HF_TOKEN, add_to_git_credential=False)
-        print("Authentification Hugging Face configurée")
-    except Exception as e:
-        print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}")
-
 # Initialisation du pipeline (chargé une seule fois au démarrage)
-print("Chargement du modèle Pyannote...")
-# Note: Dans pyannote.audio 3.3.1+, après avoir configuré le token via login()
-# ou variable d'environnement, on peut utiliser token=True
-# pyannote.audio 3.3.1+ est compatible avec NumPy 2.0
-pipeline = Pipeline.from_pretrained(
-    DIARIZATION_MODEL,
-    token=True
-)
-pipeline.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
-print("Modèle Pyannote chargé avec succès!")
+# Le pipeline sera chargé de manière lazy au premier appel pour éviter les erreurs au démarrage
+pipeline = None
+
+def load_pipeline():
+    """
+    Charge le pipeline Pyannote de manière lazy (au premier appel)
+    Cela évite que le worker échoue au démarrage si le token n'est pas configuré
+    """
+    global pipeline
+    if pipeline is not None:
+        return pipeline
+    
+    print("Chargement du modèle Pyannote...")
+    
+    # Configurer la variable d'environnement pour huggingface_hub
+    # pyannote.audio 3.3.1+ utilise huggingface_hub qui lit automatiquement
+    # les variables d'environnement HUGGING_FACE_HUB_TOKEN ou HF_TOKEN
+    if HF_TOKEN:
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = HF_TOKEN
+        # Utiliser login() pour authentifier
+        try:
+            login(token=HF_TOKEN, add_to_git_credential=False)
+            print("Authentification Hugging Face configurée")
+        except Exception as e:
+            print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}")
+            # Continuer quand même, le token peut être dans l'environnement
+    
+    # Note: Dans pyannote.audio 3.3.1+, après avoir configuré le token via login()
+    # ou variable d'environnement, on peut utiliser token=True
+    # pyannote.audio 3.3.1+ est compatible avec NumPy 2.0
+    try:
+        pipeline = Pipeline.from_pretrained(
+            DIARIZATION_MODEL,
+            token=True if HF_TOKEN else None
+        )
+        pipeline.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
+        print("Modèle Pyannote chargé avec succès!")
+        return pipeline
+    except Exception as e:
+        error_msg = f"Erreur lors du chargement du pipeline Pyannote: {str(e)}"
+        print(f"ERROR: {error_msg}")
+        import traceback
+        traceback.print_exc()
+        raise Exception(error_msg)
 
 
 def download_audio(audio_url: str) -> str:
@@ -75,6 +97,9 @@ def diarize_audio(audio_path: str) -> dict:
     Returns:
         dict: Résultat de la diarisation avec segments
     """
+    # Charger le pipeline si ce n'est pas déjà fait (lazy loading)
+    load_pipeline()
+    
     # Application du pipeline
     diarization = pipeline(audio_path)
     
