@@ -34,30 +34,57 @@ class AudioProcessor:
         try:
             logger.info(f"Traitement audio: {input_path} -> {output_path}")
             
-            # Chargement avec librosa pour meilleure qualité
-            audio, sr = librosa.load(input_path, sr=None, mono=False)
+            # Utiliser pydub pour les opérations de base (plus rapide)
+            # Charger avec pydub qui utilise ffmpeg en arrière-plan
+            audio_segment = AudioSegment.from_file(input_path)
             
             # Conversion en mono si nécessaire
-            if len(audio.shape) > 1:
-                audio = librosa.to_mono(audio)
+            if audio_segment.channels > 1:
+                audio_segment = audio_segment.set_channels(1)
             
             # Normalisation du volume (peak normalization)
-            if np.max(np.abs(audio)) > 0:
-                audio = audio / np.max(np.abs(audio)) * 0.95  # 95% pour éviter la saturation
+            # pydub utilise des dB, on normalise à -0.1 dB pour éviter la saturation
+            max_dBFS = audio_segment.max_dBFS
+            if max_dBFS is not None and max_dBFS < 0:
+                # Normaliser à -0.1 dB (équivalent à 95% en amplitude)
+                audio_segment = audio_segment.apply_gain(-0.1 - max_dBFS)
             
             # Rééchantillonnage à 16kHz si nécessaire
-            if sr != self.target_sample_rate:
-                audio = librosa.resample(audio, orig_sr=sr, target_sr=self.target_sample_rate)
+            if audio_segment.frame_rate != self.target_sample_rate:
+                audio_segment = audio_segment.set_frame_rate(self.target_sample_rate)
             
-            # Sauvegarde en WAV 16kHz mono
-            sf.write(output_path, audio, self.target_sample_rate, subtype='PCM_16')
+            # Export en WAV 16kHz mono
+            audio_segment.export(
+                output_path,
+                format="wav",
+                parameters=["-acodec", "pcm_s16le"]  # PCM 16-bit little-endian
+            )
             
             logger.info(f"Audio traité avec succès: {output_path}")
             return output_path
             
         except Exception as e:
             logger.error(f"Erreur lors du traitement audio: {str(e)}", exc_info=True)
-            raise
+            # Fallback sur librosa si pydub échoue
+            logger.info("Tentative avec librosa en fallback...")
+            try:
+                audio, sr = librosa.load(input_path, sr=None, mono=True)
+                
+                # Normalisation du volume
+                if np.max(np.abs(audio)) > 0:
+                    audio = audio / np.max(np.abs(audio)) * 0.95
+                
+                # Rééchantillonnage si nécessaire
+                if sr != self.target_sample_rate:
+                    audio = librosa.resample(audio, orig_sr=sr, target_sr=self.target_sample_rate)
+                
+                # Sauvegarde
+                sf.write(output_path, audio, self.target_sample_rate, subtype='PCM_16')
+                logger.info(f"Audio traité avec succès (librosa fallback): {output_path}")
+                return output_path
+            except Exception as e2:
+                logger.error(f"Erreur également avec librosa: {str(e2)}", exc_info=True)
+                raise
     
     def get_audio_info(self, audio_path):
         """
