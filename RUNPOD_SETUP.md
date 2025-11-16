@@ -270,8 +270,8 @@ CMD ["python", "handler.py"]
    - Remplissez :
      - **Repository URL** : `https://github.com/ClementG71/aodio`
      - **Branch** : `main`
-     - **Dockerfile Path** : `runpod_worker/Dockerfile`
-     - **Handler Path** : `runpod_worker/handler.py`
+     - **Dockerfile Path** : `Dockerfile.runpod` (à la racine du repo)
+     - **Handler Path** : **LAISSER VIDE**
    - RunPod construira automatiquement l'image Docker
 
 2. **Le Dockerfile est déjà configuré** pour copier les fichiers depuis `runpod_worker/` :
