@@ -123,6 +123,9 @@ def serve_file(session_id, filename):
     Route pour servir les fichiers audio temporairement
     Permet à RunPod de télécharger les fichiers via URL
     """
+    # Log de la requête entrante pour diagnostic
+    logger.info(f"Requête reçue pour /files/{session_id}/{filename} - Method: {request.method}, User-Agent: {request.headers.get('User-Agent', 'N/A')}, Remote: {request.remote_addr}")
+    
     # Gérer les requêtes OPTIONS pour CORS
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
@@ -133,11 +136,13 @@ def serve_file(session_id, filename):
     
     try:
         # Sécuriser le nom de fichier pour éviter les path traversal
+        # Note: secure_filename ne modifie pas les UUIDs valides
         safe_filename = secure_filename(filename)
         safe_session_id = secure_filename(session_id)
         
+        # Log pour voir si secure_filename modifie les valeurs
         if safe_filename != filename or safe_session_id != session_id:
-            logger.warning(f"Tentative d'accès non sécurisé: session_id={session_id}, filename={filename}")
+            logger.warning(f"secure_filename a modifié les valeurs: session_id={session_id}->{safe_session_id}, filename={filename}->{safe_filename}")
             return jsonify({'error': 'Nom de fichier ou session invalide'}), 400
         
         file_path = Path(UPLOAD_FOLDER) / safe_session_id / safe_filename
