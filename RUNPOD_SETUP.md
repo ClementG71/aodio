@@ -45,12 +45,12 @@ Si vous avez déjà créé un repository GitHub avec le dossier `runpod_worker/`
 
 1. **Sélectionnez "Git"**
 2. Remplissez :
-   - **Nom** : `pyannote-diarization`
+   - **Nom** : `aodio` (ou `pyannote-diarization`)
    - **GPU Type** : RTX 3090 ou A100 (minimum 16 GB VRAM)
-   - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/VotreNom/aodio`)
+   - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/ClementG71/aodio`)
    - **Branch** : `main` (ou votre branche)
-   - **Dockerfile Path** : `runpod_worker/Dockerfile`
-   - **Handler Path** : `runpod_worker/handler.py`
+   - **Dockerfile Path** : `Dockerfile` (le Dockerfile est maintenant à la racine)
+   - **Handler Path** : `/app/handler.py` (chemin dans le container)
    - **Container Disk** : 20 GB
 
 #### Option alternative : Docker (code inline)
