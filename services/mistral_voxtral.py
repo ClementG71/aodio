@@ -66,53 +66,68 @@ class MistralVoxtralClient:
                         temperature=0.0,  # Déterministe
                         timestamp_granularities=["segment"]  # Pour obtenir start/end
                     )
-            
-            # Format de réponse Mistral AI:
-            # {
-            #     "text": "texte complet",
-            #     "segments": [
-            #         {"text": "...", "start": 0.0, "end": 5.2},
-            #         ...
-            #     ]
-            # }
-            
-            mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
-            
-            # Mapping des segments Mistral avec les segments de diarisation
-            transcriptions = []
-            for diar_seg in diarization_segments:
-                # Trouver le segment Mistral correspondant (par timestamp)
-                matching_mistral = None
-                for mistral_seg in mistral_segments:
-                    mistral_start = getattr(mistral_seg, 'start', mistral_seg.get('start', 0))
-                    mistral_end = getattr(mistral_seg, 'end', mistral_seg.get('end', float('inf')))
+                
+                # Format de réponse Mistral AI:
+                # {
+                #     "text": "texte complet",
+                #     "segments": [
+                #         {"text": "...", "start": 0.0, "end": 5.2},
+                #         ...
+                #     ]
+                # }
+                
+                mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
+                
+                # Mapping des segments Mistral avec les segments de diarisation
+                transcriptions = []
+                for diar_seg in diarization_segments:
+                    # Trouver le segment Mistral correspondant (par timestamp)
+                    matching_mistral = None
+                    for mistral_seg in mistral_segments:
+                        mistral_start = getattr(mistral_seg, 'start', mistral_seg.get('start', 0))
+                        mistral_end = getattr(mistral_seg, 'end', mistral_seg.get('end', float('inf')))
+                        
+                        if mistral_start <= diar_seg['start'] < mistral_end:
+                            matching_mistral = mistral_seg
+                            break
                     
-                    if mistral_start <= diar_seg['start'] < mistral_end:
-                        matching_mistral = mistral_seg
-                        break
+                    mistral_text = ""
+                    if matching_mistral:
+                        mistral_text = getattr(matching_mistral, 'text', matching_mistral.get('text', ''))
+                    
+                    transcriptions.append({
+                        "start": diar_seg['start'],
+                        "end": diar_seg['end'],
+                        "speaker": diar_seg['speaker'],
+                        "text": mistral_text
+                    })
                 
-                mistral_text = ""
-                if matching_mistral:
-                    mistral_text = getattr(matching_mistral, 'text', matching_mistral.get('text', ''))
+                result = {
+                    "segments": transcriptions,
+                    "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
+                }
                 
-                transcriptions.append({
-                    "start": diar_seg['start'],
-                    "end": diar_seg['end'],
-                    "speaker": diar_seg['speaker'],
-                    "text": mistral_text
-                })
-            
-            result = {
-                "segments": transcriptions,
-                "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
-            }
-            
-            logger.info(f"Transcription terminée: {len(transcriptions)} segments")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
-            raise
+                logger.info(f"Transcription terminée: {len(transcriptions)} segments")
+                return result
+                
+            except SDKError as e:
+                # Gérer les erreurs 503 (Service Unavailable) avec retry
+                if hasattr(e, 'http_res') and e.http_res and e.http_res.status_code == 503:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Service Mistral AI temporairement indisponible (503), nouvelle tentative dans {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Backoff exponentiel
+                        continue
+                    else:
+                        logger.error(f"Service Mistral AI indisponible après {max_retries} tentatives: {str(e)}")
+                        raise Exception(f"Service Mistral AI temporairement indisponible. Veuillez réessayer plus tard. Erreur: {str(e)}")
+                else:
+                    # Autres erreurs (400, 401, etc.) - ne pas retry
+                    logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
+                    raise
+            except Exception as e:
+                logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
+                raise
     
     def transcribe_audio_from_url(self, audio_url: str,
                                   diarization_segments: List[Dict[str, Any]],
@@ -143,41 +158,56 @@ class MistralVoxtralClient:
                     temperature=0.0,  # Déterministe
                     timestamp_granularities=["segment"]  # Pour obtenir start/end
                 )
-            
-            # Même logique de mapping que transcribe_audio
-            mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
-            
-            transcriptions = []
-            for diar_seg in diarization_segments:
-                matching_mistral = None
-                for mistral_seg in mistral_segments:
-                    mistral_start = getattr(mistral_seg, 'start', mistral_seg.get('start', 0))
-                    mistral_end = getattr(mistral_seg, 'end', mistral_seg.get('end', float('inf')))
+                
+                # Même logique de mapping que transcribe_audio
+                mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
+                
+                transcriptions = []
+                for diar_seg in diarization_segments:
+                    matching_mistral = None
+                    for mistral_seg in mistral_segments:
+                        mistral_start = getattr(mistral_seg, 'start', mistral_seg.get('start', 0))
+                        mistral_end = getattr(mistral_seg, 'end', mistral_seg.get('end', float('inf')))
+                        
+                        if mistral_start <= diar_seg['start'] < mistral_end:
+                            matching_mistral = mistral_seg
+                            break
                     
-                    if mistral_start <= diar_seg['start'] < mistral_end:
-                        matching_mistral = mistral_seg
-                        break
+                    mistral_text = ""
+                    if matching_mistral:
+                        mistral_text = getattr(matching_mistral, 'text', matching_mistral.get('text', ''))
+                    
+                    transcriptions.append({
+                        "start": diar_seg['start'],
+                        "end": diar_seg['end'],
+                        "speaker": diar_seg['speaker'],
+                        "text": mistral_text
+                    })
                 
-                mistral_text = ""
-                if matching_mistral:
-                    mistral_text = getattr(matching_mistral, 'text', matching_mistral.get('text', ''))
+                result = {
+                    "segments": transcriptions,
+                    "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
+                }
                 
-                transcriptions.append({
-                    "start": diar_seg['start'],
-                    "end": diar_seg['end'],
-                    "speaker": diar_seg['speaker'],
-                    "text": mistral_text
-                })
-            
-            result = {
-                "segments": transcriptions,
-                "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
-            }
-            
-            logger.info(f"Transcription terminée: {len(transcriptions)} segments")
-            return result
-            
-        except Exception as e:
-            logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
-            raise
+                logger.info(f"Transcription terminée: {len(transcriptions)} segments")
+                return result
+                
+            except SDKError as e:
+                # Gérer les erreurs 503 (Service Unavailable) avec retry
+                if hasattr(e, 'http_res') and e.http_res and e.http_res.status_code == 503:
+                    if attempt < max_retries - 1:
+                        logger.warning(f"Service Mistral AI temporairement indisponible (503), nouvelle tentative dans {retry_delay}s...")
+                        time.sleep(retry_delay)
+                        retry_delay *= 2  # Backoff exponentiel
+                        continue
+                    else:
+                        logger.error(f"Service Mistral AI indisponible après {max_retries} tentatives: {str(e)}")
+                        raise Exception(f"Service Mistral AI temporairement indisponible. Veuillez réessayer plus tard. Erreur: {str(e)}")
+                else:
+                    # Autres erreurs (400, 401, etc.) - ne pas retry
+                    logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
+                    raise
+            except Exception as e:
+                logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
+                raise
 
