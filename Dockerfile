@@ -1,7 +1,8 @@
 # Dockerfile pour RunPod Worker - doit être à la racine du repo
 # Ce Dockerfile est utilisé par RunPod pour builder l'image du worker
-# PyTorch 2.8 avec CUDA 12.6 pour compatibilité avec pyannote.audio 4.0.1
-FROM runpod/pytorch:2.8.0-py3.10-cuda12.6.0-devel
+# Utilisation d'une image PyTorch officielle avec CUDA 12.1 (dernière version stable disponible)
+# Note: PyTorch 2.8 n'est pas encore disponible, on utilise la dernière version stable
+FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel
 
 # Installer les dépendances système (cette couche sera mise en cache)
 RUN apt-get update && apt-get install -y \

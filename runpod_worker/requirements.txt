@@ -2,14 +2,15 @@
 runpod>=1.0.0
 requests>=2.31.0
 
-# PyTorch - Verrouiller les versions pour éviter que pyannote.audio ne les remplace
-# L'image de base a déjà PyTorch 2.8.0 avec CUDA 12.6.0
+# PyTorch - L'image de base a déjà PyTorch 2.5.1 avec CUDA 12.1
 # On spécifie explicitement pour éviter les réinstallations non désirées
-# Note: PyTorch 2.8.0 est compatible avec CUDA 12.6.0
-torch==2.8.0
-torchaudio==2.8.0
+# Note: PyTorch 2.8 n'est pas encore disponible, on utilise 2.5.1
+# pyannote.audio 4.0.1 nécessite torch>=2.8.0, donc on utilise pyannote.audio 3.1.1
+torch==2.5.1
+torchaudio==2.5.1
 
 # Pyannote (lourd, installe en dernier)
-# pyannote.audio 4.0.1 nécessite torch>=2.8.0
-pyannote.audio==4.0.1
+# pyannote.audio 4.0.1 nécessite torch>=2.8.0 (pas encore disponible)
+# On utilise pyannote.audio 3.1.1 compatible avec PyTorch 2.5.1
+pyannote.audio==3.1.1
 
