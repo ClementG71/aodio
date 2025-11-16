@@ -35,9 +35,10 @@ jobs:
           # et les renvoyer pour forcer une mise à jour (rolling release)
           echo "Récupération des informations de l'endpoint via REST API..."
           
-          # Récupérer les infos via REST API (plus fiable que GraphQL)
+          # Récupérer les infos via REST API
+          # Endpoint correct: GET /v1/endpoints/{endpointId}
           endpoint_info=$(curl -s -w "\n%{http_code}" \
-            "https://rest.runpod.io/v1/serverless/${RUNPOD_ENDPOINT_ID}" \
+            "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}" \
             -H "Authorization: Bearer ${RUNPOD_API_KEY}")
           
           endpoint_http_code=$(echo "$endpoint_info" | tail -n1)
