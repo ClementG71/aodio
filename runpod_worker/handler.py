@@ -43,13 +43,18 @@ def load_pipeline():
             # Continuer quand même, le token peut être dans l'environnement
     
     # Note: Dans pyannote.audio 3.3.1+, après avoir configuré le token via login()
-    # ou variable d'environnement, on peut utiliser token=True
+    # ou variable d'environnement, on ne doit PAS passer token à from_pretrained()
+    # Le token sera lu automatiquement depuis l'environnement ou la session login()
     # pyannote.audio 3.3.1+ est compatible avec NumPy 2.0
     try:
-        pipeline = Pipeline.from_pretrained(
-            DIARIZATION_MODEL,
-            token=True if HF_TOKEN else None
-        )
+        # Ne pas passer token si on a déjà fait login() ou configuré la variable d'environnement
+        # Pipeline.from_pretrained() lira automatiquement le token depuis l'environnement
+        if HF_TOKEN:
+            # Token déjà configuré via login() et variable d'environnement
+            pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
+        else:
+            # Pas de token, essayer quand même (peut fonctionner si le modèle est public)
+            pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
         pipeline.to(torch.device("cuda" if torch.cuda.is_available() else "cpu"))
         print("Modèle Pyannote chargé avec succès!")
         return pipeline
