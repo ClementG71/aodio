@@ -23,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le handler en dernier (change le plus souvent)
-# Note: On copie depuis runpod_worker/ car c'est là que se trouve le vrai handler
+# On copie depuis runpod_worker/ (source de vérité) vers /app/handler.py
 COPY runpod_worker/handler.py ./handler.py
 
 # Commande de démarrage
