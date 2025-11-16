@@ -11,7 +11,9 @@ WORKDIR /app
 
 # Copier uniquement requirements.txt d'abord (pour maximiser le cache)
 # Si requirements.txt ne change pas, cette couche sera réutilisée
-COPY runpod_worker/requirements.txt ./requirements.txt
+# Note: Quand le Dockerfile est dans runpod_worker/, RunPod configure le contexte de build
+# comme étant runpod_worker/, donc les chemins sont relatifs à ce dossier
+COPY requirements.txt ./requirements.txt
 
 # Installer les dépendances Python
 # Note: torch et torchaudio sont déjà dans l'image de base (PyTorch 2.1.0 avec CUDA 11.8.0)
@@ -21,7 +23,7 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le handler en dernier (change le plus souvent)
-COPY runpod_worker/handler.py ./handler.py
+COPY handler.py ./handler.py
 
 # Commande de démarrage
 CMD ["python", "handler.py"]
