@@ -328,33 +328,64 @@ class RunPodWorker:
             dict: Résultat du job
         """
         start_time = time.time()
+        # Délai initial pour laisser le job être créé dans le système
+        initial_delay = 2
+        logger.info(f"Attente initiale de {initial_delay} secondes pour que le job soit disponible...")
+        time.sleep(initial_delay)
+        
+        consecutive_404 = 0
+        max_consecutive_404 = 3  # Tolérer 3 erreurs 404 consécutives avant d'abandonner
         
         while time.time() - start_time < max_wait:
             status_url = f"{self.base_url}/status/{job_id}"
             logger.debug(f"Vérification du statut: {status_url}")
             
-            response = requests.get(
-                status_url,
-                headers=self.headers,
-                timeout=30
-            )
-            
-            if response.status_code == 404:
-                error_msg = f"Job {job_id} non trouvé (404). Vérifiez que l'Endpoint ID est correct."
-                logger.error(error_msg)
-                raise Exception(error_msg)
-            
-            response.raise_for_status()
-            
-            status = response.json()
-            
-            if status.get('status') == 'COMPLETED':
-                return status.get('output', {})
-            elif status.get('status') == 'FAILED':
-                error = status.get('error', 'Erreur inconnue')
-                raise Exception(f"Job échoué: {error}")
-            
-            time.sleep(5)  # Attente de 5 secondes avant le prochain check
+            try:
+                response = requests.get(
+                    status_url,
+                    headers=self.headers,
+                    timeout=30
+                )
+                
+                if response.status_code == 404:
+                    consecutive_404 += 1
+                    if consecutive_404 >= max_consecutive_404:
+                        error_msg = (
+                            f"Job {job_id} non trouvé (404) après {consecutive_404} tentatives. "
+                            f"Vérifiez que l'Endpoint ID '{self.endpoint_id}' est correct. "
+                            f"URL: {status_url}"
+                        )
+                        logger.error(error_msg)
+                        raise Exception(error_msg)
+                    else:
+                        logger.warning(f"Job {job_id} non trouvé (404), tentative {consecutive_404}/{max_consecutive_404}. Nouvelle tentative dans 3 secondes...")
+                        time.sleep(3)
+                        continue
+                
+                # Réinitialiser le compteur si on obtient une réponse valide
+                consecutive_404 = 0
+                response.raise_for_status()
+                
+                status = response.json()
+                logger.debug(f"Statut du job: {status.get('status')}")
+                
+                if status.get('status') == 'COMPLETED':
+                    output = status.get('output', {})
+                    logger.info(f"Job {job_id} terminé avec succès")
+                    return output
+                elif status.get('status') == 'FAILED':
+                    error = status.get('error', 'Erreur inconnue')
+                    error_msg = f"Job {job_id} échoué: {error}"
+                    logger.error(error_msg)
+                    raise Exception(error_msg)
+                
+                # Job en cours (IN_QUEUE, IN_PROGRESS, etc.)
+                time.sleep(5)  # Attente de 5 secondes avant le prochain check
+                
+            except requests.exceptions.RequestException as e:
+                logger.warning(f"Erreur lors de la vérification du statut: {str(e)}. Nouvelle tentative dans 5 secondes...")
+                time.sleep(5)
+                continue
         
-        raise TimeoutError(f"Job {job_id} n'a pas terminé dans le délai imparti")
+        raise TimeoutError(f"Job {job_id} n'a pas terminé dans le délai imparti ({max_wait} secondes)")
 
