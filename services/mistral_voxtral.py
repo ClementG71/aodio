@@ -25,7 +25,9 @@ class MistralVoxtralClient:
             raise ValueError("MISTRAL_API_KEY doit être fourni")
         
         self.client = Mistral(api_key=self.api_key)
-        self.model = "voxtral-small-latest"
+        # Modèle Voxtral Small selon la documentation Mistral AI
+        # https://docs.mistral.ai/models/voxtral-small-25-07
+        self.model = "voxtral-small-2507"
     
     def transcribe_audio(self, audio_path: str, 
                         diarization_segments: List[Dict[str, Any]],
