@@ -103,6 +103,30 @@ def health():
     }), 200
 
 
+@app.route('/files/<session_id>/<filename>')
+def serve_file(session_id, filename):
+    """
+    Route pour servir les fichiers audio temporairement
+    Permet à RunPod de télécharger les fichiers via URL
+    """
+    try:
+        file_path = Path(UPLOAD_FOLDER) / session_id / filename
+        
+        # Sécurité : vérifier que le fichier existe et est dans le bon dossier
+        if not file_path.exists():
+            return jsonify({'error': 'Fichier introuvable'}), 404
+        
+        # Vérifier que le fichier est bien dans le dossier de session
+        if not str(file_path).startswith(str(Path(UPLOAD_FOLDER).resolve())):
+            return jsonify({'error': 'Accès non autorisé'}), 403
+        
+        return send_file(file_path, as_attachment=False)
+        
+    except Exception as e:
+        logger.error(f"Erreur lors du service du fichier: {str(e)}")
+        return jsonify({'error': str(e)}), 500
+
+
 @app.route('/upload', methods=['POST'])
 def upload_files():
     """Endpoint pour l'upload des fichiers audio et documents contextuels"""

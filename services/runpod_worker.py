@@ -6,6 +6,7 @@ import json
 import logging
 import requests
 import time
+import os
 from typing import Dict, List, Any
 
 logger = logging.getLogger(__name__)
@@ -14,10 +15,23 @@ logger = logging.getLogger(__name__)
 class RunPodWorker:
     """Gère les appels au worker RunPod pour diarisation et transcription"""
     
-    def __init__(self, api_key: str, endpoint_id: str):
+    def __init__(self, api_key: str, endpoint_id: str, base_url: str = None):
+        """
+        Initialise le client RunPod
+        
+        Args:
+            api_key: Clé API RunPod
+            endpoint_id: ID de l'endpoint RunPod
+            base_url: URL de base de l'application Flask (pour servir les fichiers)
+        """
         self.api_key = api_key
         self.endpoint_id = endpoint_id
         self.base_url = f"https://api.runpod.io/v2/{endpoint_id}"
+        self.app_base_url = base_url or os.getenv('RAILWAY_PUBLIC_DOMAIN') or 'http://localhost:5000'
+        # S'assurer que l'URL ne se termine pas par /
+        if self.app_base_url.endswith('/'):
+            self.app_base_url = self.app_base_url[:-1]
+        
         self.headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
@@ -25,19 +39,39 @@ class RunPodWorker:
     
     def _upload_file(self, file_path: str) -> str:
         """
-        Upload un fichier vers RunPod et retourne l'URL
+        Génère une URL accessible publiquement pour le fichier audio
+        Le fichier sera servi via une route Flask
         
         Args:
-            file_path: Chemin local du fichier
+            file_path: Chemin local du fichier (ex: uploads/session_id/audio_processed.wav)
             
         Returns:
-            str: URL du fichier uploadé
+            str: URL publique du fichier
         """
-        # Note: Implémentation dépendante de votre configuration RunPod
-        # Ici, on suppose que le fichier est accessible via une URL
-        # En production, vous devrez uploader vers S3 ou un service similaire
-        logger.warning("Upload de fichier non implémenté - à adapter selon votre infrastructure")
-        return file_path
+        try:
+            # Extraire session_id et filename du chemin
+            # Format attendu: uploads/session_id/filename
+            path_parts = file_path.replace('\\', '/').split('/')
+            
+            if 'uploads' not in path_parts:
+                raise ValueError(f"Chemin de fichier invalide: {file_path}")
+            
+            uploads_index = path_parts.index('uploads')
+            if len(path_parts) < uploads_index + 3:
+                raise ValueError(f"Chemin de fichier invalide: {file_path}")
+            
+            session_id = path_parts[uploads_index + 1]
+            filename = path_parts[uploads_index + 2]
+            
+            # Construire l'URL publique
+            file_url = f"{self.app_base_url}/files/{session_id}/{filename}"
+            
+            logger.info(f"URL générée pour le fichier: {file_url}")
+            return file_url
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la génération de l'URL: {str(e)}")
+            raise
     
     def diarize_audio(self, audio_path: str) -> Dict[str, Any]:
         """
@@ -65,12 +99,27 @@ class RunPodWorker:
             }
             
             # Appel à l'API RunPod
+            # URL correcte: https://api.runpod.io/v2/{endpoint_id}/run
+            api_url = f"{self.base_url}/run"
+            logger.info(f"Appel API RunPod: {api_url}")
+            logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+            
             response = requests.post(
-                f"{self.base_url}/run",
+                api_url,
                 headers=self.headers,
                 json=payload,
                 timeout=300
             )
+            
+            # Log de la réponse pour debug
+            logger.debug(f"Status code: {response.status_code}")
+            logger.debug(f"Response: {response.text[:500]}")
+            
+            if response.status_code == 404:
+                error_msg = f"Endpoint non trouvé (404). Vérifiez que l'Endpoint ID '{self.endpoint_id}' est correct."
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
             response.raise_for_status()
             
             job_id = response.json().get('id')
@@ -257,11 +306,20 @@ class RunPodWorker:
         start_time = time.time()
         
         while time.time() - start_time < max_wait:
+            status_url = f"{self.base_url}/status/{job_id}"
+            logger.debug(f"Vérification du statut: {status_url}")
+            
             response = requests.get(
-                f"{self.base_url}/status/{job_id}",
+                status_url,
                 headers=self.headers,
                 timeout=30
             )
+            
+            if response.status_code == 404:
+                error_msg = f"Job {job_id} non trouvé (404). Vérifiez que l'Endpoint ID est correct."
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
             response.raise_for_status()
             
             status = response.json()
