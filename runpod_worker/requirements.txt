@@ -5,12 +5,13 @@ requests>=2.31.0
 # PyTorch - L'image de base a déjà PyTorch 2.5.1 avec CUDA 12.1
 # On spécifie explicitement pour éviter les réinstallations non désirées
 # Note: PyTorch 2.8 n'est pas encore disponible, on utilise 2.5.1
-# pyannote.audio 4.0.1 nécessite torch>=2.8.0, donc on utilise pyannote.audio 3.1.1
+# pyannote.audio 3.3.1+ est compatible avec PyTorch 2.5.1 et NumPy 2.0
 torch==2.5.1
 torchaudio==2.5.1
 
 # Pyannote (lourd, installe en dernier)
-# pyannote.audio 4.0.1 nécessite torch>=2.8.0 (pas encore disponible)
-# On utilise pyannote.audio 3.1.1 compatible avec PyTorch 2.5.1
-pyannote.audio==3.1.1
+# pyannote.audio 3.3.1+ corrige l'incompatibilité avec NumPy 2.0 (np.NaN -> np.nan)
+# Compatible avec PyTorch 2.5.1 et NumPy 2.0
+# Note: pyannote.audio 4.0.1 nécessite torch>=2.8.0 (pas encore disponible dans les images Docker)
+pyannote.audio>=3.3.1,<4.0.0
 

@@ -1,5 +1,5 @@
 """
-Worker RunPod pour la diarisation avec Pyannote 3.1.1
+Worker RunPod pour la diarisation avec Pyannote 3.3.1+
 Ce fichier doit être déployé sur RunPod
 """
 import os
@@ -15,7 +15,8 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Initialisation du pipeline (chargé une seule fois au démarrage)
 print("Chargement du modèle Pyannote...")
-# Note: Dans pyannote.audio 3.1.1, le paramètre est 'token' (pas 'use_auth_token')
+# Note: Dans pyannote.audio 3.3.1+, le paramètre est 'token' (pas 'use_auth_token')
+# pyannote.audio 3.3.1+ est compatible avec NumPy 2.0
 pipeline = Pipeline.from_pretrained(
     DIARIZATION_MODEL,
     token=HF_TOKEN

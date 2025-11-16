@@ -2,7 +2,8 @@
 # Ce Dockerfile est utilisé par RunPod pour builder l'image du worker
 # Note: Le contexte de build RunPod est toujours la racine du repo,
 # donc les chemins COPY utilisent runpod_worker/ comme préfixe
-# PyTorch 2.5.1 avec CUDA 12.1 pour compatibilité avec pyannote.audio 3.1.1
+# PyTorch 2.5.1 avec CUDA 12.1 pour compatibilité avec pyannote.audio 3.3.1+
+# Note: pyannote.audio 3.3.1+ corrige l'incompatibilité avec NumPy 2.0
 # Note: PyTorch 2.8 n'est pas encore disponible, on utilise 2.5.1
 # Utilisation d'une image PyTorch officielle
 FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel
