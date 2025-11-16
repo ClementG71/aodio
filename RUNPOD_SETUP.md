@@ -50,7 +50,7 @@ Si vous avez déjà créé un repository GitHub avec le dossier `runpod_worker/`
    - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/ClementG71/aodio`)
    - **Branch** : `main` (ou votre branche)
    - **Dockerfile Path** : `Dockerfile` (le Dockerfile est maintenant à la racine)
-   - **Handler Path** : `app/handler.py` (chemin relatif au repo pour validation RunPod)
+   - **Handler Path** : `handler.py` (chemin relatif à la racine du repo)
    - **Container Disk** : 20 GB
    
    **Note importante** : 
