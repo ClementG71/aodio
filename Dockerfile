@@ -17,7 +17,7 @@ WORKDIR /app
 COPY runpod_worker/requirements.txt ./requirements.txt
 
 # Installer les dépendances Python
-# Note: torch et torchaudio sont déjà dans l'image de base (PyTorch 2.1.0 avec CUDA 11.8.0)
+# Note: torch et torchaudio sont déjà dans l'image de base (PyTorch 2.8.0 avec CUDA 12.6.0)
 # On les spécifie dans requirements.txt pour éviter que pyannote.audio ne les remplace
 # On utilise --no-cache-dir pour réduire la taille, mais le cache Docker accélérera les builds suivants
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
