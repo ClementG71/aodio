@@ -50,8 +50,10 @@ Si vous avez déjà créé un repository GitHub avec le dossier `runpod_worker/`
    - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/ClementG71/aodio`)
    - **Branch** : `main` (ou votre branche)
    - **Dockerfile Path** : `Dockerfile` (le Dockerfile est maintenant à la racine)
-   - **Handler Path** : `/app/handler.py` (chemin dans le container)
+   - **Handler Path** : `/app/handler.py` (chemin dans l'image Docker après le build)
    - **Container Disk** : 20 GB
+   
+   **Note importante** : Si vous obtenez une erreur `path "/app/.../temp/app/handler.py" not found`, cela signifie que RunPod essaie de valider le handler avant le build. Dans ce cas, essayez de laisser le champ "Handler Path" vide lors de la création, puis configurez-le après le premier build réussi. Ou utilisez le chemin relatif au repo : `runpod_worker/handler.py` (mais cela peut ne pas fonctionner car le Dockerfile copie le fichier vers `/app/handler.py`).
 
 #### Option alternative : Docker (code inline)
 
