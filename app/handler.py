@@ -15,7 +15,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Initialisation du pipeline (chargé une seule fois au démarrage)
 print("Chargement du modèle Pyannote...")
-# Note: Dans pyannote.audio 4.0.1+, le paramètre est 'token' et non 'use_auth_token'
+# Note: Dans pyannote.audio 4.0.1, le paramètre est 'token' (pas 'use_auth_token')
 pipeline = Pipeline.from_pretrained(
     DIARIZATION_MODEL,
     token=HF_TOKEN
