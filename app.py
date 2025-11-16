@@ -236,6 +236,14 @@ def process_audio_pipeline(session_id, metadata):
         # Fallback pour développement local
         app_base_url = os.getenv('APP_BASE_URL', 'http://localhost:5000')
     
+    # Vérification des clés API avant initialisation
+    if not app.config.get('RUNPOD_API_KEY'):
+        raise ValueError("RUNPOD_API_KEY n'est pas configurée dans les variables d'environnement")
+    if not app.config.get('RUNPOD_ENDPOINT_ID'):
+        raise ValueError("RUNPOD_ENDPOINT_ID n'est pas configurée dans les variables d'environnement")
+    
+    logger.info(f"Initialisation RunPod avec Endpoint ID: {app.config['RUNPOD_ENDPOINT_ID']}")
+    
     # RunPod uniquement pour Pyannote (diarisation)
     runpod_worker = RunPodWorker(
         api_key=app.config['RUNPOD_API_KEY'],

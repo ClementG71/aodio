@@ -26,7 +26,8 @@ class RunPodWorker:
         """
         self.api_key = api_key
         self.endpoint_id = endpoint_id
-        self.base_url = f"https://api.runpod.io/v2/{endpoint_id}"
+        # URL correcte selon la documentation RunPod : api.runpod.ai (pas .io)
+        self.base_url = f"https://api.runpod.ai/v2/{endpoint_id}"
         self.app_base_url = base_url or os.getenv('RAILWAY_PUBLIC_DOMAIN') or 'http://localhost:5000'
         # S'assurer que l'URL ne se termine pas par /
         if self.app_base_url.endswith('/'):
@@ -99,10 +100,15 @@ class RunPodWorker:
             }
             
             # Appel à l'API RunPod
-            # URL correcte: https://api.runpod.io/v2/{endpoint_id}/run
+            # URL correcte selon la doc: https://api.runpod.ai/v2/{endpoint_id}/run
             api_url = f"{self.base_url}/run"
             logger.info(f"Appel API RunPod: {api_url}")
+            logger.info(f"Endpoint ID utilisé: {self.endpoint_id}")
             logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+            
+            # Vérifier que l'API key est présente
+            if not self.api_key:
+                raise ValueError("RUNPOD_API_KEY n'est pas configurée")
             
             response = requests.post(
                 api_url,
@@ -112,17 +118,35 @@ class RunPodWorker:
             )
             
             # Log de la réponse pour debug
-            logger.debug(f"Status code: {response.status_code}")
-            logger.debug(f"Response: {response.text[:500]}")
+            logger.info(f"Status code: {response.status_code}")
+            logger.debug(f"Response headers: {dict(response.headers)}")
+            logger.debug(f"Response: {response.text[:1000]}")
             
             if response.status_code == 404:
-                error_msg = f"Endpoint non trouvé (404). Vérifiez que l'Endpoint ID '{self.endpoint_id}' est correct."
+                error_msg = (
+                    f"Endpoint non trouvé (404). "
+                    f"Vérifiez que l'Endpoint ID '{self.endpoint_id}' est correct. "
+                    f"URL appelée: {api_url}"
+                )
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
+            if response.status_code == 401:
+                error_msg = (
+                    f"Authentification échouée (401). "
+                    f"Vérifiez que votre RUNPOD_API_KEY est correcte et valide."
+                )
                 logger.error(error_msg)
                 raise Exception(error_msg)
             
             response.raise_for_status()
             
-            job_id = response.json().get('id')
+            response_data = response.json()
+            job_id = response_data.get('id')
+            
+            if not job_id:
+                logger.error(f"Réponse inattendue de l'API: {response_data}")
+                raise Exception(f"L'API n'a pas retourné d'ID de job. Réponse: {response_data}")
             
             # Attente de la complétion
             result = self._wait_for_completion(job_id)
