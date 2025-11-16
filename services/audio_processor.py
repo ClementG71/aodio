@@ -24,6 +24,9 @@ class AudioProcessor:
         """
         Normalise et compresse un fichier audio
         
+        Pour les fichiers très longs (jusqu'à 4h15), utilise ffmpeg directement
+        pour éviter de charger tout en mémoire.
+        
         Args:
             input_path: Chemin du fichier audio d'entrée
             output_path: Chemin du fichier audio de sortie
@@ -34,19 +37,73 @@ class AudioProcessor:
         try:
             logger.info(f"Traitement audio: {input_path} -> {output_path}")
             
-            # Utiliser pydub pour les opérations de base (plus rapide)
-            # Charger avec pydub qui utilise ffmpeg en arrière-plan
+            # Utiliser ffmpeg directement via subprocess pour les gros fichiers
+            # Cela évite de charger tout en mémoire et est plus rapide
+            import subprocess
+            
+            # Construire la commande ffmpeg
+            # -i : fichier d'entrée
+            # -ar : sample rate (16kHz)
+            # -ac : nombre de canaux (1 = mono)
+            # -af "loudnorm=I=-16:TP=-1.5:LRA=11" : normalisation du volume (optionnel, peut être lent)
+            # -acodec pcm_s16le : codec PCM 16-bit little-endian
+            # -y : écraser le fichier de sortie s'il existe
+            
+            # Pour les très longs fichiers, on simplifie la normalisation
+            # On utilise juste la conversion de format et le rééchantillonnage
+            cmd = [
+                'ffmpeg',
+                '-i', str(input_path),
+                '-ar', str(self.target_sample_rate),  # Sample rate 16kHz
+                '-ac', '1',  # Mono
+                '-acodec', 'pcm_s16le',  # PCM 16-bit
+                '-y',  # Overwrite output
+                str(output_path)
+            ]
+            
+            logger.info(f"Exécution de ffmpeg: {' '.join(cmd)}")
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=3600  # Timeout de 1 heure pour les très longs fichiers
+            )
+            
+            if result.returncode != 0:
+                logger.warning(f"ffmpeg a retourné une erreur: {result.stderr}")
+                # Fallback sur pydub si ffmpeg échoue
+                logger.info("Tentative avec pydub en fallback...")
+                return self._process_with_pydub(input_path, output_path)
+            
+            logger.info(f"Audio traité avec succès (ffmpeg): {output_path}")
+            return output_path
+            
+        except subprocess.TimeoutExpired:
+            logger.error("Timeout lors du traitement avec ffmpeg")
+            raise Exception("Le traitement audio a pris trop de temps")
+        except FileNotFoundError:
+            logger.warning("ffmpeg non trouvé, utilisation de pydub")
+            return self._process_with_pydub(input_path, output_path)
+        except Exception as e:
+            logger.error(f"Erreur lors du traitement audio: {str(e)}", exc_info=True)
+            # Fallback sur pydub
+            logger.info("Tentative avec pydub en fallback...")
+            return self._process_with_pydub(input_path, output_path)
+    
+    def _process_with_pydub(self, input_path, output_path):
+        """
+        Traitement audio avec pydub (fallback)
+        """
+        try:
             audio_segment = AudioSegment.from_file(input_path)
             
             # Conversion en mono si nécessaire
             if audio_segment.channels > 1:
                 audio_segment = audio_segment.set_channels(1)
             
-            # Normalisation du volume (peak normalization)
-            # pydub utilise des dB, on normalise à -0.1 dB pour éviter la saturation
+            # Normalisation du volume
             max_dBFS = audio_segment.max_dBFS
             if max_dBFS is not None and max_dBFS < 0:
-                # Normaliser à -0.1 dB (équivalent à 95% en amplitude)
                 audio_segment = audio_segment.apply_gain(-0.1 - max_dBFS)
             
             # Rééchantillonnage à 16kHz si nécessaire
@@ -57,16 +114,16 @@ class AudioProcessor:
             audio_segment.export(
                 output_path,
                 format="wav",
-                parameters=["-acodec", "pcm_s16le"]  # PCM 16-bit little-endian
+                parameters=["-acodec", "pcm_s16le"]
             )
             
-            logger.info(f"Audio traité avec succès: {output_path}")
+            logger.info(f"Audio traité avec succès (pydub): {output_path}")
             return output_path
             
         except Exception as e:
-            logger.error(f"Erreur lors du traitement audio: {str(e)}", exc_info=True)
-            # Fallback sur librosa si pydub échoue
-            logger.info("Tentative avec librosa en fallback...")
+            logger.error(f"Erreur avec pydub: {str(e)}", exc_info=True)
+            # Dernier fallback sur librosa (peut être très lent pour les longs fichiers)
+            logger.info("Tentative avec librosa en dernier recours...")
             try:
                 audio, sr = librosa.load(input_path, sr=None, mono=True)
                 
