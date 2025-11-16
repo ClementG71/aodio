@@ -31,25 +31,47 @@ jobs:
             exit 1
           fi
           
-          # Appeler l'API RunPod pour mettre à jour l'endpoint (déclenche un rebuild)
-          # Selon la doc RunPod, POST /v1/endpoints/{endpointId}/update déclenche un rolling release
-          # On envoie un body vide pour déclencher juste le rebuild sans changer la config
-          response=$(curl -s -w "\n%{http_code}" -X POST \
-            "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}/update" \
-            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+          # Méthode 1: Utiliser l'API GraphQL RunPod (plus fiable selon la doc)
+          # La mutation saveEndpoint avec forceUpdateTemplate déclenche un rebuild
+          echo "Tentative avec l'API GraphQL..."
+          graphql_response=$(curl -s -w "\n%{http_code}" -X POST \
+            "https://api.runpod.io/graphql?api_key=${RUNPOD_API_KEY}" \
             -H "Content-Type: application/json" \
-            -d '{}')
+            -d "{\"query\": \"mutation { saveEndpoint(input: { id: \\\"${RUNPOD_ENDPOINT_ID}\\\", forceUpdateTemplate: true }) { id } }\"}")
           
-          # Extraire le code de statut HTTP (dernière ligne)
-          http_code=$(echo "$response" | tail -n1)
-          body=$(echo "$response" | sed '$d')
+          graphql_http_code=$(echo "$graphql_response" | tail -n1)
+          graphql_body=$(echo "$graphql_response" | sed '$d')
           
-          if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
-            echo "✅ Rebuild déclenché avec succès!"
-            echo "Réponse: $body"
+          if [ "$graphql_http_code" -eq 200 ]; then
+            # Vérifier si la réponse GraphQL contient des erreurs
+            if echo "$graphql_body" | grep -q '"errors"'; then
+              echo "⚠️ GraphQL a retourné des erreurs, tentative avec REST API..."
+              # Méthode 2: Fallback sur REST API
+              rest_response=$(curl -s -w "\n%{http_code}" -X PATCH \
+                "https://rest.runpod.io/v1/endpoints/${RUNPOD_ENDPOINT_ID}" \
+                -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+                -H "Content-Type: application/json" \
+                -d '{"forceUpdateTemplate": true}')
+              
+              rest_http_code=$(echo "$rest_response" | tail -n1)
+              rest_body=$(echo "$rest_response" | sed '$d')
+              
+              if [ "$rest_http_code" -eq 200 ] || [ "$rest_http_code" -eq 201 ]; then
+                echo "✅ Rebuild déclenché avec succès via REST API!"
+                echo "Réponse: $rest_body"
+              else
+                echo "❌ Erreur REST API (HTTP $rest_http_code)"
+                echo "Réponse: $rest_body"
+                echo "Réponse GraphQL: $graphql_body"
+                exit 1
+              fi
+            else
+              echo "✅ Rebuild déclenché avec succès via GraphQL!"
+              echo "Réponse: $graphql_body"
+            fi
           else
-            echo "❌ Erreur lors du déclenchement du rebuild (HTTP $http_code)"
-            echo "Réponse: $body"
+            echo "❌ Erreur GraphQL (HTTP $graphql_http_code)"
+            echo "Réponse: $graphql_body"
             exit 1
           fi
 
