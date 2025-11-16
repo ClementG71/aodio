@@ -124,20 +124,57 @@ def serve_file(session_id, filename):
     Permet à RunPod de télécharger les fichiers via URL
     """
     try:
-        file_path = Path(UPLOAD_FOLDER) / session_id / filename
+        # Sécuriser le nom de fichier pour éviter les path traversal
+        safe_filename = secure_filename(filename)
+        safe_session_id = secure_filename(session_id)
         
-        # Sécurité : vérifier que le fichier existe et est dans le bon dossier
+        if safe_filename != filename or safe_session_id != session_id:
+            logger.warning(f"Tentative d'accès non sécurisé: session_id={session_id}, filename={filename}")
+            return jsonify({'error': 'Nom de fichier ou session invalide'}), 400
+        
+        file_path = Path(UPLOAD_FOLDER) / safe_session_id / safe_filename
+        
+        # Vérifier que le fichier existe
         if not file_path.exists():
+            logger.warning(f"Fichier introuvable: {file_path}")
             return jsonify({'error': 'Fichier introuvable'}), 404
         
-        # Vérifier que le fichier est bien dans le dossier de session
-        if not str(file_path).startswith(str(Path(UPLOAD_FOLDER).resolve())):
-            return jsonify({'error': 'Accès non autorisé'}), 403
+        # Vérifier que le fichier est bien dans le dossier uploads
+        # Utiliser resolve() pour normaliser les chemins
+        upload_folder_resolved = Path(UPLOAD_FOLDER).resolve()
+        file_path_resolved = file_path.resolve()
         
-        return send_file(file_path, as_attachment=False)
+        try:
+            # Python 3.9+ : is_relative_to
+            if not file_path_resolved.is_relative_to(upload_folder_resolved):
+                logger.warning(f"Tentative d'accès hors du dossier uploads: {file_path_resolved}")
+                return jsonify({'error': 'Accès non autorisé'}), 403
+        except AttributeError:
+            # Python < 3.9 : utiliser une vérification manuelle
+            try:
+                file_path_resolved.relative_to(upload_folder_resolved)
+            except ValueError:
+                logger.warning(f"Tentative d'accès hors du dossier uploads: {file_path_resolved}")
+                return jsonify({'error': 'Accès non autorisé'}), 403
+        
+        logger.info(f"Serving file: {file_path} (size: {file_path.stat().st_size} bytes)")
+        
+        # Servir le fichier avec les headers appropriés pour permettre le téléchargement
+        response = send_file(
+            file_path,
+            as_attachment=False,
+            mimetype='application/octet-stream'
+        )
+        
+        # Ajouter des headers CORS si nécessaire (pour RunPod)
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        
+        return response
         
     except Exception as e:
-        logger.error(f"Erreur lors du service du fichier: {str(e)}")
+        logger.error(f"Erreur lors du service du fichier {session_id}/{filename}: {str(e)}", exc_info=True)
         return jsonify({'error': str(e)}), 500
 
 
