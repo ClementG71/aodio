@@ -49,7 +49,7 @@ Si vous avez déjà créé un repository GitHub avec le dossier `runpod_worker/`
    - **GPU Type** : RTX 3090 ou A100 (minimum 16 GB VRAM)
    - **Repository URL** : URL de votre repo GitHub (ex: `https://github.com/ClementG71/aodio`)
    - **Branch** : `main` (ou votre branche)
-   - **Dockerfile Path** : `Dockerfile` (le Dockerfile est maintenant à la racine)
+   - **Dockerfile Path** : `Dockerfile.runpod` (le Dockerfile pour RunPod est à la racine)
    - **Handler Path** : **LAISSER VIDE** (le Dockerfile gère le chemin via CMD)
    - **Container Disk** : 20 GB
    
