@@ -117,12 +117,20 @@ def health():
     }), 200
 
 
-@app.route('/files/<session_id>/<filename>')
+@app.route('/files/<session_id>/<filename>', methods=['GET', 'HEAD', 'OPTIONS'])
 def serve_file(session_id, filename):
     """
     Route pour servir les fichiers audio temporairement
     Permet à RunPod de télécharger les fichiers via URL
     """
+    # Gérer les requêtes OPTIONS pour CORS
+    if request.method == 'OPTIONS':
+        response = jsonify({'status': 'ok'})
+        response.headers['Access-Control-Allow-Origin'] = '*'
+        response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
+        response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
+        return response
+    
     try:
         # Sécuriser le nom de fichier pour éviter les path traversal
         safe_filename = secure_filename(filename)
@@ -140,22 +148,15 @@ def serve_file(session_id, filename):
             return jsonify({'error': 'Fichier introuvable'}), 404
         
         # Vérifier que le fichier est bien dans le dossier uploads
-        # Utiliser resolve() pour normaliser les chemins
+        # Utiliser une vérification simple avec les chemins normalisés
         upload_folder_resolved = Path(UPLOAD_FOLDER).resolve()
         file_path_resolved = file_path.resolve()
         
-        try:
-            # Python 3.9+ : is_relative_to
-            if not file_path_resolved.is_relative_to(upload_folder_resolved):
-                logger.warning(f"Tentative d'accès hors du dossier uploads: {file_path_resolved}")
-                return jsonify({'error': 'Accès non autorisé'}), 403
-        except AttributeError:
-            # Python < 3.9 : utiliser une vérification manuelle
-            try:
-                file_path_resolved.relative_to(upload_folder_resolved)
-            except ValueError:
-                logger.warning(f"Tentative d'accès hors du dossier uploads: {file_path_resolved}")
-                return jsonify({'error': 'Accès non autorisé'}), 403
+        # Vérifier que le chemin du fichier commence par le chemin du dossier uploads
+        # Utiliser str() pour éviter les problèmes de comparaison de Path
+        if not str(file_path_resolved).startswith(str(upload_folder_resolved)):
+            logger.warning(f"Tentative d'accès hors du dossier uploads: {file_path_resolved} (uploads: {upload_folder_resolved})")
+            return jsonify({'error': 'Accès non autorisé'}), 403
         
         logger.info(f"Serving file: {file_path} (size: {file_path.stat().st_size} bytes)")
         
