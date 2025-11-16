@@ -1,0 +1,61 @@
+name: Rebuild RunPod Endpoint
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'runpod_worker/**'
+      - '.github/workflows/runpod-rebuild.yml'
+  release:
+    types: [published, edited]
+  workflow_dispatch:  # Permet de déclencher manuellement depuis l'interface GitHub
+
+jobs:
+  rebuild-runpod:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Trigger RunPod Endpoint Rebuild
+        env:
+          RUNPOD_API_KEY: ${{ secrets.RUNPOD_API_KEY }}
+          RUNPOD_ENDPOINT_ID: ${{ secrets.RUNPOD_ENDPOINT_ID }}
+        run: |
+          echo "Déclenchement du rebuild de l'endpoint RunPod..."
+          
+          # Vérifier que les secrets sont configurés
+          if [ -z "$RUNPOD_API_KEY" ] || [ -z "$RUNPOD_ENDPOINT_ID" ]; then
+            echo "❌ Erreur: RUNPOD_API_KEY ou RUNPOD_ENDPOINT_ID manquant dans les secrets GitHub"
+            exit 1
+          fi
+          
+          # Appeler l'API RunPod pour mettre à jour l'endpoint (déclenche un rebuild)
+          # Selon la doc RunPod, PUT /endpoints/{endpointId} déclenche un rolling release
+          response=$(curl -s -w "\n%{http_code}" -X PUT \
+            "https://api.runpod.ai/v2/${RUNPOD_ENDPOINT_ID}" \
+            -H "Authorization: Bearer ${RUNPOD_API_KEY}" \
+            -H "Content-Type: application/json" \
+            -d '{}')
+          
+          # Extraire le code de statut HTTP (dernière ligne)
+          http_code=$(echo "$response" | tail -n1)
+          body=$(echo "$response" | sed '$d')
+          
+          if [ "$http_code" -eq 200 ] || [ "$http_code" -eq 201 ]; then
+            echo "✅ Rebuild déclenché avec succès!"
+            echo "Réponse: $body"
+          else
+            echo "❌ Erreur lors du déclenchement du rebuild (HTTP $http_code)"
+            echo "Réponse: $body"
+            exit 1
+          fi
+
+      - name: Wait for deployment
+        if: success()
+        run: |
+          echo "⏳ Attente de 10 secondes pour laisser le déploiement démarrer..."
+          sleep 10
+          echo "✅ Le rebuild a été déclenché. Vérifiez le statut sur RunPod."
+
