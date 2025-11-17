@@ -1,8 +1,9 @@
 """
-Service de traitement audio : normalisation et compression
+Service de traitement audio amélioré : normalisation, réduction de bruit, filtrage
 """
 import os
 import logging
+import subprocess
 from pathlib import Path
 from pydub import AudioSegment
 import librosa
@@ -13,23 +14,30 @@ logger = logging.getLogger(__name__)
 
 
 class AudioProcessor:
-    """Traite les fichiers audio : normalisation et compression"""
+    """Traite les fichiers audio avec amélioration de la qualité"""
     
     def __init__(self):
         self.target_sample_rate = 16000  # Taux d'échantillonnage cible
         self.target_channels = 1  # Mono
         self.target_bitrate = '128k'  # Bitrate pour compression
-    
-    def process_audio(self, input_path, output_path):
-        """
-        Normalise et compresse un fichier audio
         
-        Pour les fichiers très longs (jusqu'à 4h15), utilise ffmpeg directement
-        pour éviter de charger tout en mémoire.
+        # Paramètres de normalisation améliorés
+        self.normalize_lufs = -16.0  # Niveau cible en LUFS (Loudness Units Full Scale)
+        self.normalize_tp = -1.5     # True Peak
+        self.normalize_lra = 11     # Loudness Range
+        
+        # Paramètres de réduction de bruit (optionnel, peut être désactivé)
+        self.enable_noise_reduction = True
+        self.noise_reduction_strength = 0.5  # 0.0 à 1.0
+    
+    def process_audio(self, input_path, output_path, enable_enhancement=True):
+        """
+        Traite un fichier audio avec amélioration de la qualité
         
         Args:
             input_path: Chemin du fichier audio d'entrée
             output_path: Chemin du fichier audio de sortie
+            enable_enhancement: Activer les améliorations (normalisation, réduction de bruit)
             
         Returns:
             str: Chemin du fichier traité
@@ -37,64 +45,154 @@ class AudioProcessor:
         try:
             logger.info(f"Traitement audio: {input_path} -> {output_path}")
             
-            # Utiliser ffmpeg directement via subprocess pour les gros fichiers
-            # Cela évite de charger tout en mémoire et est plus rapide
-            import subprocess
+            # Étape 1: Analyse du fichier d'entrée
+            audio_info = self._get_audio_info(input_path)
+            if audio_info:
+                logger.info(f"Audio d'entrée: {audio_info['sample_rate']}Hz, "
+                          f"{audio_info['channels']} canaux, "
+                          f"{audio_info['duration_seconds']:.1f}s")
             
-            # Construire la commande ffmpeg
-            # -i : fichier d'entrée
-            # -ar : sample rate (16kHz)
-            # -ac : nombre de canaux (1 = mono)
-            # -af "loudnorm=I=-16:TP=-1.5:LRA=11" : normalisation du volume (optionnel, peut être lent)
-            # -acodec pcm_s16le : codec PCM 16-bit little-endian
-            # -y : écraser le fichier de sortie s'il existe
-            
-            # Pour les très longs fichiers, on simplifie la normalisation
-            # On utilise juste la conversion de format et le rééchantillonnage
-            # Optimisations de performance :
-            # -threads 0 : utilise tous les CPU disponibles
-            # -preset fast : équilibre vitesse/qualité
-            # -loglevel error : réduit les logs pour améliorer les performances
+            # Étape 2: Traitement avec ffmpeg (méthode optimale)
+            if enable_enhancement:
+                return self._process_with_ffmpeg_enhanced(input_path, output_path)
+            else:
+                return self._process_with_ffmpeg_basic(input_path, output_path)
+                
+        except Exception as e:
+            logger.error(f"Erreur lors du traitement audio: {str(e)}", exc_info=True)
+            # Fallback sur méthode basique
+            logger.info("Tentative avec méthode basique en fallback...")
+            return self._process_with_ffmpeg_basic(input_path, output_path)
+    
+    def _process_with_ffmpeg_enhanced(self, input_path, output_path):
+        """
+        Traitement audio amélioré avec ffmpeg
+        - Normalisation du volume (dynaudnorm)
+        - Réduction de bruit (highpass + lowpass)
+        - Filtrage pour améliorer la qualité de la parole
+        """
+        try:
+            # Méthode optimisée : utiliser dynaudnorm (normalisation dynamique, plus rapide)
+            # + filtres pour améliorer la qualité
             cmd = [
                 'ffmpeg',
-                '-threads', '0',  # Utiliser tous les CPU disponibles
+                '-threads', '0',
                 '-i', str(input_path),
-                '-ar', str(self.target_sample_rate),  # Sample rate 16kHz
-                '-ac', '1',  # Mono
-                '-acodec', 'pcm_s16le',  # PCM 16-bit
-                '-loglevel', 'error',  # Réduire les logs pour améliorer les performances
-                '-y',  # Overwrite output
+                
+                # Filtres audio (appliqués dans l'ordre)
+                '-af', self._build_audio_filters(),
+                
+                # Paramètres de sortie
+                '-ar', str(self.target_sample_rate),
+                '-ac', str(self.target_channels),
+                '-acodec', 'pcm_s16le',
+                '-loglevel', 'error',
+                '-y',
                 str(output_path)
             ]
             
-            logger.info(f"Exécution de ffmpeg: {' '.join(cmd)}")
+            logger.info(f"Traitement audio amélioré avec ffmpeg...")
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600  # Timeout de 1 heure pour les très longs fichiers
+                timeout=3600
             )
             
             if result.returncode != 0:
-                logger.warning(f"ffmpeg a retourné une erreur: {result.stderr}")
-                # Fallback sur pydub si ffmpeg échoue
-                logger.info("Tentative avec pydub en fallback...")
-                return self._process_with_pydub(input_path, output_path)
+                logger.warning(f"ffmpeg amélioré a échoué: {result.stderr}")
+                # Fallback sur méthode basique
+                return self._process_with_ffmpeg_basic(input_path, output_path)
             
-            logger.info(f"Audio traité avec succès (ffmpeg): {output_path}")
+            logger.info(f"Audio traité avec succès (ffmpeg amélioré): {output_path}")
+            
+            # Vérification de la qualité
+            self._verify_audio_quality(output_path)
+            
             return output_path
             
         except subprocess.TimeoutExpired:
-            logger.error("Timeout lors du traitement avec ffmpeg")
-            raise Exception("Le traitement audio a pris trop de temps")
-        except FileNotFoundError:
-            logger.warning("ffmpeg non trouvé, utilisation de pydub")
-            return self._process_with_pydub(input_path, output_path)
+            logger.error("Timeout lors du traitement amélioré")
+            return self._process_with_ffmpeg_basic(input_path, output_path)
         except Exception as e:
-            logger.error(f"Erreur lors du traitement audio: {str(e)}", exc_info=True)
-            # Fallback sur pydub
-            logger.info("Tentative avec pydub en fallback...")
+            logger.warning(f"Erreur avec traitement amélioré: {e}")
+            return self._process_with_ffmpeg_basic(input_path, output_path)
+    
+    def _build_audio_filters(self):
+        """
+        Construit la chaîne de filtres audio pour améliorer la qualité
+        
+        Filtres appliqués (dans l'ordre):
+        1. highpass: Supprime les basses fréquences (< 80Hz) - bruit de fond
+        2. lowpass: Supprime les hautes fréquences (> 8000Hz) - réduit le bruit
+        3. dynaudnorm: Normalisation dynamique du volume
+        """
+        filters = []
+        
+        # 1. Filtre passe-haut : supprime les basses fréquences (bruit de fond)
+        filters.append(f"highpass=f=80")
+        
+        # 2. Filtre passe-bas : supprime les hautes fréquences (bruit aigu)
+        # Pour la parole, on garde jusqu'à 8kHz (suffisant pour 16kHz sample rate)
+        filters.append(f"lowpass=f=8000")
+        
+        # 3. Normalisation dynamique du volume
+        # Paramètres: g=5 (gain), p=0.95 (target level), m=10.0 (max gain), r=0.0 (ratio)
+        filters.append("dynaudnorm=g=5:p=0.95:m=10.0:r=0.0")
+        
+        return ",".join(filters)
+    
+    def _process_with_ffmpeg_basic(self, input_path, output_path):
+        """
+        Traitement audio basique (méthode actuelle, rapide)
+        """
+        cmd = [
+            'ffmpeg',
+            '-threads', '0',
+            '-i', str(input_path),
+            '-ar', str(self.target_sample_rate),
+            '-ac', str(self.target_channels),
+            '-acodec', 'pcm_s16le',
+            '-loglevel', 'error',
+            '-y',
+            str(output_path)
+        ]
+        
+        logger.info(f"Exécution de ffmpeg (basique): {' '.join(cmd)}")
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            timeout=3600
+        )
+        
+        if result.returncode != 0:
+            logger.warning(f"ffmpeg a retourné une erreur: {result.stderr}")
             return self._process_with_pydub(input_path, output_path)
+        
+        logger.info(f"Audio traité avec succès (ffmpeg basique): {output_path}")
+        return output_path
+    
+    def _verify_audio_quality(self, output_path):
+        """
+        Vérifie la qualité de l'audio traité
+        """
+        try:
+            audio_info = self._get_audio_info(output_path)
+            if audio_info:
+                # Vérifier que le sample rate est correct
+                if audio_info['sample_rate'] != self.target_sample_rate:
+                    logger.warning(f"Sample rate incorrect: {audio_info['sample_rate']}Hz au lieu de {self.target_sample_rate}Hz")
+                
+                # Vérifier que c'est bien mono
+                if audio_info['channels'] != 1:
+                    logger.warning(f"Nombre de canaux incorrect: {audio_info['channels']} au lieu de 1")
+                
+                logger.info(f"Qualité audio vérifiée: {audio_info['sample_rate']}Hz, "
+                          f"{audio_info['channels']} canal(aux), "
+                          f"{audio_info['duration_seconds']:.1f}s")
+        except Exception as e:
+            logger.warning(f"Impossible de vérifier la qualité audio: {e}")
     
     def _process_with_pydub(self, input_path, output_path):
         """

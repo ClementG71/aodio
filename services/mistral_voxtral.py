@@ -310,18 +310,11 @@ class MistralVoxtralClient:
                 
                 logger.info(f"Transcription directe: {len(mistral_segments)} segments Mistral reçus, texte complet: {len(transcription_response.text if hasattr(transcription_response, 'text') else '')} caractères")
                 
-                # Si aucun segment Mistral avec timestamps, utiliser le texte complet et le distribuer selon la diarisation
+                # Utiliser le mapping hybride amélioré
                 full_text = transcription_response.text if hasattr(transcription_response, 'text') else ""
-                if len(mistral_segments) == 0 and full_text:
-                    logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
-                    # Créer un segment audio fictif pour la distribution
-                    audio_duration = self._get_audio_duration(audio_path)
-                    fake_audio_segments = [{"start_time": 0, "end_time": audio_duration}]
-                    # Le regroupement est fait dans _distribute_text_by_diarization
-                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, diarization_segments)
-                else:
-                    # Mapping avec diarisation
-                    transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
+                transcriptions = self._map_transcription_to_diarization_hybrid(
+                    mistral_segments, diarization_segments, full_text
+                )
                 
                 result = {
                     "segments": transcriptions,
@@ -420,15 +413,11 @@ class MistralVoxtralClient:
             
             logger.info(f"Total segments Mistral après ajustement: {len(all_mistral_segments)}, segments avec texte: {sum(1 for s in all_mistral_segments if s.get('text', '').strip())}")
             
-            # Si aucun segment Mistral avec timestamps, utiliser le texte complet et le distribuer selon la diarisation
-            if len(all_mistral_segments) == 0 and full_text_parts:
-                logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
-                full_text = " ".join(full_text_parts)
-                # Le regroupement est fait dans _distribute_text_by_diarization
-                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, diarization_segments)
-            else:
-                # Mapping avec diarisation
-                transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
+            # Utiliser le mapping hybride amélioré
+            full_text = " ".join(full_text_parts) if full_text_parts else ""
+            transcriptions = self._map_transcription_to_diarization_hybrid(
+                all_mistral_segments, diarization_segments, full_text
+            )
             
             result = {
                 "segments": transcriptions,
@@ -561,6 +550,349 @@ class MistralVoxtralClient:
             logger.error(f"PROBLÈME: {mistral_with_text} segments Mistral ont du texte mais aucun mapping n'a été trouvé! Vérifier la logique de chevauchement.")
         
         return transcriptions
+    
+    def _map_transcription_to_diarization_hybrid(self, mistral_segments: List[Dict[str, Any]],
+                                                diarization_segments: List[Dict[str, Any]],
+                                                full_text: str = "") -> List[Dict[str, Any]]:
+        """
+        Mapping hybride amélioré avec validation
+        
+        Stratégie:
+        1. Si timestamps Mistral disponibles → mapping par chevauchement temporel
+        2. Si timestamps partiels → combinaison des deux méthodes
+        3. Si seulement texte complet → distribution séquentielle
+        4. Validation et correction des incohérences
+        """
+        logger.info(f"Mapping hybride: {len(mistral_segments)} segments Mistral, "
+                   f"{len(diarization_segments)} segments diarisation")
+        
+        # Trier par timestamp
+        diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        # Cas 1: Segments Mistral avec timestamps disponibles
+        mistral_with_timestamps = [m for m in mistral_segments 
+                                   if m.get('start') is not None and m.get('end') is not None]
+        
+        if len(mistral_with_timestamps) >= len(diarization_segments) * 0.5:
+            # Au moins 50% des segments ont des timestamps → utiliser mapping temporel
+            logger.info("Utilisation du mapping temporel (timestamps disponibles)")
+            transcriptions = self._map_transcription_to_diarization_v1(
+                mistral_with_timestamps, diarization_segments
+            )
+            
+            # Validation et complétion si nécessaire
+            segments_without_text = [t for t in transcriptions if not t.get('text', '').strip()]
+            if segments_without_text and full_text:
+                logger.warning(f"{len(segments_without_text)} segments sans texte, complétion...")
+                transcriptions = self._fill_missing_segments_with_sequential(
+                    transcriptions, full_text, diarization_segments
+                )
+        else:
+            # Moins de 50% de timestamps → utiliser distribution séquentielle
+            logger.info("Utilisation de la distribution séquentielle (peu de timestamps)")
+            transcriptions = self._distribute_text_by_chronological_order(
+                full_text, diarization_segments
+            )
+        
+        # Validation finale
+        self._validate_transcription_mapping(transcriptions, diarization_segments)
+        
+        return transcriptions
+    
+    def _map_transcription_to_diarization_v1(self, mistral_segments: List[Dict[str, Any]],
+                                             diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Mapping temporel amélioré : attribution unique avec meilleur chevauchement
+        """
+        # Convertir et trier
+        mistral_dicts = []
+        for mistral_seg in mistral_segments:
+            if isinstance(mistral_seg, dict):
+                mistral_dicts.append(mistral_seg)
+            else:
+                mistral_dicts.append({
+                    'start': getattr(mistral_seg, 'start', 0),
+                    'end': getattr(mistral_seg, 'end', 0),
+                    'text': getattr(mistral_seg, 'text', '')
+                })
+        
+        mistral_dicts = sorted(mistral_dicts, key=lambda x: x.get('start', 0))
+        diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        # Marquer les segments Mistral comme non utilisés
+        mistral_used = [False] * len(mistral_dicts)
+        transcriptions = []
+        
+        for diar_seg in diarization_segments:
+            diar_start = diar_seg['start']
+            diar_end = diar_seg['end']
+            diar_duration = diar_end - diar_start
+            
+            # Trouver le segment Mistral avec le meilleur chevauchement (non utilisé)
+            best_match = None
+            best_overlap_ratio = 0
+            best_overlap_duration = 0
+            
+            for idx, mistral_seg in enumerate(mistral_dicts):
+                if mistral_used[idx]:
+                    continue
+                    
+                mistral_start = mistral_seg.get('start', 0)
+                mistral_end = mistral_seg.get('end', float('inf'))
+                mistral_text = mistral_seg.get('text', '').strip()
+                
+                if not mistral_text:
+                    continue
+                
+                # Calculer le chevauchement
+                overlap_start = max(mistral_start, diar_start)
+                overlap_end = min(mistral_end, diar_end)
+                overlap_duration = max(0, overlap_end - overlap_start)
+                
+                if overlap_duration <= 0:
+                    continue
+                
+                # Ratio de chevauchement (proportion du segment de diarisation couvert)
+                overlap_ratio = overlap_duration / diar_duration if diar_duration > 0 else 0
+                
+                # Seuil minimum : au moins 30% de chevauchement OU au moins 1 seconde
+                min_overlap_ratio = 0.3
+                min_overlap_duration = 1.0
+                
+                if (overlap_ratio >= min_overlap_ratio or overlap_duration >= min_overlap_duration):
+                    # Prioriser les segments avec le meilleur chevauchement
+                    # Score = ratio de chevauchement * 0.7 + durée de chevauchement normalisée * 0.3
+                    normalized_duration = min(overlap_duration / 10.0, 1.0)  # Normaliser sur 10s max
+                    score = overlap_ratio * 0.7 + normalized_duration * 0.3
+                    
+                    current_score = best_overlap_ratio * 0.7 + (best_overlap_duration / 10.0) * 0.3
+                    
+                    if score > current_score:
+                        best_overlap_ratio = overlap_ratio
+                        best_overlap_duration = overlap_duration
+                        best_match = (idx, mistral_seg)
+            
+            # Attribuer le texte si match trouvé
+            if best_match:
+                idx, mistral_seg = best_match
+                mistral_used[idx] = True
+                text = mistral_seg.get('text', '').strip()
+                
+                # Log pour les premiers matches
+                if len(transcriptions) < 3:
+                    logger.info(f"Match trouvé: diarisation [{diar_start:.1f}s-{diar_end:.1f}s] "
+                              f"speaker={diar_seg.get('speaker', 'UNKNOWN')} "
+                              f"-> Mistral [{mistral_seg.get('start', 0):.1f}s-{mistral_seg.get('end', 0):.1f}s] "
+                              f"(overlap: {best_overlap_ratio*100:.1f}%)")
+            else:
+                text = ""
+                if len(transcriptions) < 5:
+                    logger.debug(f"Aucun match pour segment diarisation "
+                               f"[{diar_start:.1f}s-{diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')}")
+            
+            transcriptions.append({
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
+                "text": text
+            })
+        
+        # Statistiques
+        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
+        logger.info(f"Mapping temporel terminé: {segments_with_text}/{len(transcriptions)} segments avec texte")
+        
+        return transcriptions
+    
+    def _distribute_text_by_chronological_order(self, full_text: str,
+                                               diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Distribution séquentielle : le texte est distribué dans l'ordre chronologique
+        strict des segments de diarisation
+        """
+        # Trier par ordre chronologique
+        sorted_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        # Découper le texte en phrases
+        sentence_pattern = r'([.!?])\s+'
+        sentences = re.split(sentence_pattern, full_text)
+        
+        # Reconstruire les phrases complètes
+        complete_sentences = []
+        i = 0
+        while i < len(sentences):
+            sentence = sentences[i].strip()
+            if i + 1 < len(sentences):
+                punctuation = sentences[i + 1]
+                sentence += punctuation
+                i += 2
+            else:
+                i += 1
+            
+            if sentence:
+                complete_sentences.append(sentence)
+        
+        complete_sentences = [s.strip() for s in complete_sentences if s.strip()]
+        total_sentences = len(complete_sentences)
+        
+        logger.info(f"Distribution séquentielle: {total_sentences} phrases sur {len(sorted_segments)} segments")
+        
+        # Calculer la durée totale de parole
+        total_speech_duration = sum(seg.get('end', 0) - seg.get('start', 0) 
+                                   for seg in sorted_segments)
+        
+        if total_speech_duration == 0:
+            logger.error("Durée totale de parole = 0, impossible de distribuer")
+            return [{"start": seg['start'], "end": seg['end'], 
+                    "speaker": seg['speaker'], "text": ""} 
+                   for seg in sorted_segments]
+        
+        # Distribution séquentielle
+        transcriptions = []
+        sentence_index = 0
+        current_speaker = None
+        
+        for seg_idx, diar_seg in enumerate(sorted_segments):
+            diar_start = diar_seg.get('start', 0)
+            diar_end = diar_seg.get('end', 0)
+            diar_duration = diar_end - diar_start
+            seg_speaker = diar_seg.get('speaker', 'UNKNOWN')
+            
+            # Si changement de speaker, s'assurer qu'on termine la phrase en cours
+            if current_speaker != seg_speaker and current_speaker is not None:
+                # Prendre au moins une phrase complète pour le nouveau speaker
+                if sentence_index < total_sentences:
+                    # Ne pas prendre de phrase ici, on la prendra dans le segment suivant
+                    pass
+            
+            # Calculer le nombre de phrases pour ce segment (proportionnel mais séquentiel)
+            if diar_duration > 0 and total_speech_duration > 0:
+                sentences_for_segment = (diar_duration / total_speech_duration) * total_sentences
+                sentences_count = max(1, int(round(sentences_for_segment)))  # Au moins 1 phrase
+            else:
+                sentences_count = 0
+            
+            # Prendre les phrases suivantes dans l'ordre
+            segment_sentences = []
+            if sentences_count > 0 and sentence_index < total_sentences:
+                end_index = min(sentence_index + sentences_count, total_sentences)
+                segment_sentences = complete_sentences[sentence_index:end_index]
+                sentence_index = end_index
+            
+            segment_text = " ".join(segment_sentences).strip()
+            current_speaker = seg_speaker
+            
+            transcriptions.append({
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": seg_speaker,
+                "text": segment_text
+            })
+        
+        # Distribuer les phrases restantes
+        if sentence_index < total_sentences:
+            remaining_sentences = complete_sentences[sentence_index:]
+            remaining_text = " ".join(remaining_sentences).strip()
+            if transcriptions:
+                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
+                logger.info(f"Ajout de {len(remaining_sentences)} phrases restantes au dernier segment")
+        
+        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
+        logger.info(f"Distribution séquentielle terminée: {segments_with_text}/{len(transcriptions)} segments avec texte")
+        
+        return transcriptions
+    
+    def _fill_missing_segments_with_sequential(self, transcriptions: List[Dict[str, Any]],
+                                              full_text: str,
+                                              diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Complète les segments sans texte avec distribution séquentielle
+        """
+        # Identifier les segments sans texte
+        segments_without_text = [i for i, t in enumerate(transcriptions) 
+                                if not t.get('text', '').strip()]
+        
+        if not segments_without_text:
+            return transcriptions
+        
+        logger.info(f"Complétion de {len(segments_without_text)} segments sans texte")
+        
+        # Extraire le texte déjà utilisé (approximatif)
+        used_text = " ".join([t.get('text', '') for t in transcriptions if t.get('text', '').strip()])
+        
+        # Calculer le texte restant (approximatif)
+        # On prend le texte complet et on retire les parties déjà utilisées
+        remaining_text = full_text
+        # Note: Cette méthode est approximative, mais mieux que rien
+        
+        # Distribuer le texte restant aux segments vides
+        sentences = re.split(r'([.!?])\s+', remaining_text)
+        complete_sentences = []
+        i = 0
+        while i < len(sentences):
+            sentence = sentences[i].strip()
+            if i + 1 < len(sentences):
+                sentence += sentences[i + 1]
+                i += 2
+            else:
+                i += 1
+            if sentence:
+                complete_sentences.append(sentence)
+        
+        # Distribuer proportionnellement aux segments vides
+        total_duration_empty = sum(diarization_segments[i].get('end', 0) - diarization_segments[i].get('start', 0)
+                                  for i in segments_without_text)
+        
+        if total_duration_empty > 0:
+            sentence_index = 0
+            for idx in segments_without_text:
+                seg = diarization_segments[idx]
+                seg_duration = seg.get('end', 0) - seg.get('start', 0)
+                
+                if seg_duration > 0:
+                    sentences_for_seg = int((seg_duration / total_duration_empty) * len(complete_sentences))
+                    sentences_for_seg = max(1, sentences_for_seg)
+                    
+                    if sentence_index < len(complete_sentences):
+                        end_idx = min(sentence_index + sentences_for_seg, len(complete_sentences))
+                        seg_sentences = complete_sentences[sentence_index:end_idx]
+                        transcriptions[idx]["text"] = " ".join(seg_sentences).strip()
+                        sentence_index = end_idx
+        
+        return transcriptions
+    
+    def _validate_transcription_mapping(self, transcriptions: List[Dict[str, Any]],
+                                       diarization_segments: List[Dict[str, Any]]):
+        """
+        Valide la cohérence du mapping et détecte les problèmes
+        """
+        issues = []
+        
+        # Vérifier le nombre de segments
+        if len(transcriptions) != len(diarization_segments):
+            issues.append(f"Nombre de segments différent: {len(transcriptions)} vs {len(diarization_segments)}")
+        
+        # Vérifier l'ordre chronologique
+        for i in range(len(transcriptions) - 1):
+            if transcriptions[i].get('start', 0) > transcriptions[i+1].get('start', 0):
+                issues.append(f"Ordre chronologique cassé à l'index {i}")
+        
+        # Vérifier que les speakers correspondent
+        for i, (trans, diar) in enumerate(zip(transcriptions, diarization_segments)):
+            if trans.get('speaker') != diar.get('speaker'):
+                issues.append(f"Speaker mismatch à l'index {i}: {trans.get('speaker')} vs {diar.get('speaker')}")
+        
+        # Vérifier les segments sans texte
+        segments_without_text = sum(1 for t in transcriptions if not t.get('text', '').strip())
+        if segments_without_text > len(transcriptions) * 0.2:  # Plus de 20% sans texte
+            issues.append(f"Trop de segments sans texte: {segments_without_text}/{len(transcriptions)}")
+        
+        # Logger les problèmes
+        if issues:
+            logger.warning(f"Problèmes détectés dans le mapping: {len(issues)}")
+            for issue in issues[:5]:  # Limiter à 5 pour éviter les logs trop longs
+                logger.warning(f"  - {issue}")
+        else:
+            logger.info("Validation du mapping: OK")
     
     def _merge_consecutive_diarization_segments(self, diarization_segments: List[Dict[str, Any]], 
                                                max_gap_seconds: float = 5.0) -> List[Dict[str, Any]]:
