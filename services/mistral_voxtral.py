@@ -368,8 +368,9 @@ class MistralVoxtralClient:
                 # Ajuster les timestamps en ajoutant l'offset du segment
                 offset = seg_info['start_time']
                 segment_mistral_segments = seg_result.get('segments', [])
-                logger.debug(f"Segment {i+1}: {len(segment_mistral_segments)} segments Mistral reçus")
+                logger.info(f"Segment {i+1}: {len(segment_mistral_segments)} segments Mistral reçus, texte complet: {len(seg_result.get('text', ''))} caractères")
                 
+                segments_with_text_count = 0
                 for seg in segment_mistral_segments:
                     # Extraire les valeurs (gérer à la fois les dicts et les objets)
                     if isinstance(seg, dict):
@@ -388,14 +389,25 @@ class MistralVoxtralClient:
                         'text': seg_text.strip() if seg_text else ''
                     }
                     
-                    # Log si le texte est vide
-                    if not adjusted_seg['text']:
-                        logger.warning(f"Segment Mistral vide: [{adjusted_seg['start']:.1f}s - {adjusted_seg['end']:.1f}s]")
+                    # Compter les segments avec texte
+                    if adjusted_seg['text']:
+                        segments_with_text_count += 1
+                        # Log les premiers segments avec texte pour déboguer
+                        if segments_with_text_count <= 3:
+                            logger.info(f"Segment Mistral {segments_with_text_count} avec texte: [{adjusted_seg['start']:.1f}s - {adjusted_seg['end']:.1f}s] '{adjusted_seg['text'][:50]}...'")
+                    else:
+                        # Log seulement les premiers segments vides
+                        if len(all_mistral_segments) < 3:
+                            logger.warning(f"Segment Mistral vide: [{adjusted_seg['start']:.1f}s - {adjusted_seg['end']:.1f}s]")
                     
                     all_mistral_segments.append(adjusted_seg)
                 
-                if seg_result['text']:
+                logger.info(f"Segment {i+1}: {segments_with_text_count}/{len(segment_mistral_segments)} segments Mistral avec texte")
+                
+                if seg_result.get('text'):
                     full_text_parts.append(seg_result['text'])
+            
+            logger.info(f"Total segments Mistral après ajustement: {len(all_mistral_segments)}, segments avec texte: {sum(1 for s in all_mistral_segments if s.get('text', '').strip())}")
             
             # Mapping avec diarisation
             transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
@@ -445,11 +457,28 @@ class MistralVoxtralClient:
                     'text': getattr(mistral_seg, 'text', '')
                 })
         
-        logger.debug(f"Mapping: {len(mistral_dicts)} segments Mistral avec {len(diarization_segments)} segments de diarisation")
+        logger.info(f"Mapping: {len(mistral_dicts)} segments Mistral avec {len(diarization_segments)} segments de diarisation")
+        
+        # Compter les segments Mistral avec texte
+        mistral_with_text = sum(1 for m in mistral_dicts if m.get('text', '').strip())
+        logger.info(f"Segments Mistral avec texte: {mistral_with_text}/{len(mistral_dicts)}")
+        
+        # Log les premiers segments Mistral pour déboguer
+        if mistral_dicts:
+            logger.info(f"Premier segment Mistral: start={mistral_dicts[0].get('start', 0):.1f}s, end={mistral_dicts[0].get('end', 0):.1f}s, text_length={len(mistral_dicts[0].get('text', ''))}")
+            if len(mistral_dicts) > 1:
+                logger.info(f"Dernier segment Mistral: start={mistral_dicts[-1].get('start', 0):.1f}s, end={mistral_dicts[-1].get('end', 0):.1f}s, text_length={len(mistral_dicts[-1].get('text', ''))}")
+        
+        # Log les premiers segments de diarisation pour déboguer
+        if diarization_segments:
+            logger.info(f"Premier segment diarisation: start={diarization_segments[0].get('start', 0):.1f}s, end={diarization_segments[0].get('end', 0):.1f}s, speaker={diarization_segments[0].get('speaker', 'UNKNOWN')}")
+            if len(diarization_segments) > 1:
+                logger.info(f"Dernier segment diarisation: start={diarization_segments[-1].get('start', 0):.1f}s, end={diarization_segments[-1].get('end', 0):.1f}s, speaker={diarization_segments[-1].get('speaker', 'UNKNOWN')}")
         
         # Trier les segments Mistral par timestamp pour faciliter la recherche
         mistral_dicts.sort(key=lambda x: x.get('start', 0))
         
+        matches_found = 0
         for diar_seg in diarization_segments:
             diar_start = diar_seg['start']
             diar_end = diar_seg['end']
@@ -471,16 +500,33 @@ class MistralVoxtralClient:
                     overlap_duration = overlap_end - overlap_start
                     diar_duration = diar_end - diar_start
                     
-                    # Si le chevauchement est significatif (> 50% du segment de diarisation)
-                    if overlap_duration > 0 and (overlap_duration / diar_duration) > 0.3:
+                    # Si le chevauchement est significatif (au moins 10% du segment de diarisation ou 1 seconde)
+                    # Réduit le seuil de 30% à 10% pour être plus permissif
+                    min_overlap_ratio = 0.1  # 10% minimum
+                    min_overlap_duration = 1.0  # ou au moins 1 seconde
+                    
+                    if overlap_duration > 0 and (
+                        (overlap_duration / diar_duration) >= min_overlap_ratio or 
+                        overlap_duration >= min_overlap_duration
+                    ):
                         matching_texts.append(mistral_text)
+                        
+                        # Log détaillé pour les premiers matches
+                        if matches_found == 0 and len(matching_texts) == 1:
+                            logger.info(f"Premier match trouvé: diarisation [{diar_start:.1f}s-{diar_end:.1f}s] chevauche avec Mistral [{mistral_start:.1f}s-{mistral_end:.1f}s] (overlap: {overlap_duration:.1f}s, ratio: {overlap_duration/diar_duration*100:.1f}%)")
             
             # Concaténer tous les textes correspondants
             mistral_text = " ".join(matching_texts).strip()
             
-            # Log si aucun texte trouvé pour déboguer
-            if not mistral_text:
-                logger.debug(f"Aucun texte trouvé pour segment diarisation [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')}")
+            if mistral_text:
+                matches_found += 1
+                # Log les premiers matches pour déboguer
+                if matches_found <= 3:
+                    logger.info(f"Match {matches_found}: segment diarisation [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')} -> texte: '{mistral_text[:50]}...'")
+            else:
+                # Log seulement les premiers segments sans match pour déboguer
+                if len(transcriptions) < 5:
+                    logger.debug(f"Aucun texte trouvé pour segment diarisation [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')}")
             
             transcriptions.append({
                 "start": diar_start,
@@ -491,7 +537,10 @@ class MistralVoxtralClient:
         
         # Statistiques de mapping
         segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
-        logger.info(f"Mapping terminé: {segments_with_text}/{len(transcriptions)} segments avec texte")
+        logger.info(f"Mapping terminé: {segments_with_text}/{len(transcriptions)} segments avec texte ({matches_found} matches trouvés)")
+        
+        if segments_with_text == 0 and mistral_with_text > 0:
+            logger.error(f"PROBLÈME: {mistral_with_text} segments Mistral ont du texte mais aucun mapping n'a été trouvé! Vérifier la logique de chevauchement.")
         
         return transcriptions
     
