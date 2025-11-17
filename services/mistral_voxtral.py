@@ -307,14 +307,23 @@ class MistralVoxtralClient:
                             'text': getattr(seg, 'text', '')
                         })
                 
-                logger.debug(f"Transcription directe: {len(mistral_segments)} segments Mistral reçus")
+                logger.info(f"Transcription directe: {len(mistral_segments)} segments Mistral reçus, texte complet: {len(transcription_response.text if hasattr(transcription_response, 'text') else '')} caractères")
                 
-                # Mapping avec diarisation
-                transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
+                # Si aucun segment Mistral avec timestamps, utiliser le texte complet et le distribuer selon la diarisation
+                full_text = transcription_response.text if hasattr(transcription_response, 'text') else ""
+                if len(mistral_segments) == 0 and full_text:
+                    logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
+                    # Créer un segment audio fictif pour la distribution
+                    audio_duration = self._get_audio_duration(audio_path)
+                    fake_audio_segments = [{"start_time": 0, "end_time": audio_duration}]
+                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, diarization_segments)
+                else:
+                    # Mapping avec diarisation
+                    transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
                 
                 result = {
                     "segments": transcriptions,
-                    "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
+                    "full_text": full_text
                 }
                 
                 logger.info(f"Transcription terminée: {len(transcriptions)} segments")
@@ -409,8 +418,14 @@ class MistralVoxtralClient:
             
             logger.info(f"Total segments Mistral après ajustement: {len(all_mistral_segments)}, segments avec texte: {sum(1 for s in all_mistral_segments if s.get('text', '').strip())}")
             
-            # Mapping avec diarisation
-            transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
+            # Si aucun segment Mistral avec timestamps, utiliser le texte complet et le distribuer selon la diarisation
+            if len(all_mistral_segments) == 0 and full_text_parts:
+                logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
+                full_text = " ".join(full_text_parts)
+                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, diarization_segments)
+            else:
+                # Mapping avec diarisation
+                transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
             
             result = {
                 "segments": transcriptions,
@@ -541,6 +556,94 @@ class MistralVoxtralClient:
         
         if segments_with_text == 0 and mistral_with_text > 0:
             logger.error(f"PROBLÈME: {mistral_with_text} segments Mistral ont du texte mais aucun mapping n'a été trouvé! Vérifier la logique de chevauchement.")
+        
+        return transcriptions
+    
+    def _distribute_text_by_diarization(self, full_text: str, 
+                                       audio_segments: List[Dict[str, Any]],
+                                       diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Distribue le texte complet selon les segments de diarisation
+        Utilisé quand l'API Mistral ne retourne pas de segments avec timestamps
+        
+        Args:
+            full_text: Texte complet de la transcription
+            audio_segments: Liste des segments audio découpés (avec start_time, end_time)
+            diarization_segments: Segments de diarisation avec speakers
+            
+        Returns:
+            list: Segments mappés avec speaker et texte distribué
+        """
+        logger.info(f"Distribution du texte complet ({len(full_text)} caractères) selon {len(diarization_segments)} segments de diarisation")
+        
+        # Calculer la durée totale de l'audio
+        total_duration = 0
+        if audio_segments:
+            last_segment = audio_segments[-1]
+            total_duration = last_segment.get('end_time', 0)
+        else:
+            # Estimer depuis les segments de diarisation
+            if diarization_segments:
+                total_duration = max(seg.get('end', 0) for seg in diarization_segments)
+        
+        if total_duration == 0:
+            logger.error("Impossible de déterminer la durée totale de l'audio")
+            return [{"start": seg['start'], "end": seg['end'], "speaker": seg['speaker'], "text": ""} 
+                   for seg in diarization_segments]
+        
+        # Calculer la durée totale de parole (somme des durées des segments de diarisation)
+        total_speech_duration = sum(seg.get('end', 0) - seg.get('start', 0) for seg in diarization_segments)
+        
+        if total_speech_duration == 0:
+            logger.error("Aucune durée de parole détectée dans les segments de diarisation")
+            return [{"start": seg['start'], "end": seg['end'], "speaker": seg['speaker'], "text": ""} 
+                   for seg in diarization_segments]
+        
+        # Distribuer le texte proportionnellement à la durée de chaque segment de diarisation
+        transcriptions = []
+        text_index = 0
+        words = full_text.split()
+        total_words = len(words)
+        
+        logger.info(f"Distribution: {total_words} mots sur {total_speech_duration:.1f}s de parole totale")
+        
+        for diar_seg in diarization_segments:
+            diar_start = diar_seg.get('start', 0)
+            diar_end = diar_seg.get('end', 0)
+            diar_duration = diar_end - diar_start
+            
+            # Calculer le nombre de mots pour ce segment (proportionnel à sa durée)
+            if diar_duration > 0:
+                words_for_segment = int((diar_duration / total_speech_duration) * total_words)
+            else:
+                words_for_segment = 0
+            
+            # Extraire les mots pour ce segment
+            if words_for_segment > 0 and text_index < total_words:
+                segment_words = words[text_index:text_index + words_for_segment]
+                segment_text = " ".join(segment_words)
+                text_index += words_for_segment
+            else:
+                segment_text = ""
+            
+            transcriptions.append({
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
+                "text": segment_text
+            })
+        
+        # Distribuer les mots restants sur les derniers segments
+        if text_index < total_words:
+            remaining_words = words[text_index:]
+            remaining_text = " ".join(remaining_words)
+            if transcriptions:
+                # Ajouter au dernier segment
+                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
+                logger.info(f"Ajout de {len(remaining_words)} mots restants au dernier segment")
+        
+        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
+        logger.info(f"Distribution terminée: {segments_with_text}/{len(transcriptions)} segments avec texte")
         
         return transcriptions
     
