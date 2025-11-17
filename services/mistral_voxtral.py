@@ -164,9 +164,41 @@ class MistralVoxtralClient:
                         timestamp_granularities=["segment"]
                     )
                 
+                # Extraire le texte complet
+                full_text = ""
+                if hasattr(transcription_response, 'text'):
+                    full_text = transcription_response.text
+                elif isinstance(transcription_response, dict):
+                    full_text = transcription_response.get('text', '')
+                
+                # Extraire les segments
+                segments = []
+                if hasattr(transcription_response, 'segments'):
+                    segments = transcription_response.segments
+                elif isinstance(transcription_response, dict):
+                    segments = transcription_response.get('segments', [])
+                
+                # Convertir les segments en listes de dicts si nécessaire
+                segments_list = []
+                for seg in segments:
+                    if isinstance(seg, dict):
+                        segments_list.append(seg)
+                    else:
+                        # Objet avec attributs
+                        segments_list.append({
+                            'start': getattr(seg, 'start', 0),
+                            'end': getattr(seg, 'end', 0),
+                            'text': getattr(seg, 'text', '')
+                        })
+                
+                # Log pour déboguer
+                logger.debug(f"Transcription segment: {len(segments_list)} segments, texte complet: {len(full_text)} caractères")
+                if segments_list:
+                    logger.debug(f"Premier segment: start={segments_list[0].get('start', 0):.1f}s, end={segments_list[0].get('end', 0):.1f}s, text_length={len(segments_list[0].get('text', ''))}")
+                
                 return {
-                    'text': transcription_response.text if hasattr(transcription_response, 'text') else "",
-                    'segments': transcription_response.segments if hasattr(transcription_response, 'segments') else []
+                    'text': full_text,
+                    'segments': segments_list
                 }
                 
             except SDKError as e:
@@ -255,7 +287,27 @@ class MistralVoxtralClient:
                         timestamp_granularities=["segment"]
                     )
                 
-                mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
+                # Extraire les segments (même logique que _transcribe_segment)
+                segments = []
+                if hasattr(transcription_response, 'segments'):
+                    segments = transcription_response.segments
+                elif isinstance(transcription_response, dict):
+                    segments = transcription_response.get('segments', [])
+                
+                # Convertir les segments en listes de dicts si nécessaire
+                mistral_segments = []
+                for seg in segments:
+                    if isinstance(seg, dict):
+                        mistral_segments.append(seg)
+                    else:
+                        # Objet avec attributs
+                        mistral_segments.append({
+                            'start': getattr(seg, 'start', 0),
+                            'end': getattr(seg, 'end', 0),
+                            'text': getattr(seg, 'text', '')
+                        })
+                
+                logger.debug(f"Transcription directe: {len(mistral_segments)} segments Mistral reçus")
                 
                 # Mapping avec diarisation
                 transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
@@ -315,15 +367,31 @@ class MistralVoxtralClient:
                 
                 # Ajuster les timestamps en ajoutant l'offset du segment
                 offset = seg_info['start_time']
-                for seg in seg_result['segments']:
-                    seg_start = getattr(seg, 'start', seg.get('start', 0))
-                    seg_end = getattr(seg, 'end', seg.get('end', 0))
+                segment_mistral_segments = seg_result.get('segments', [])
+                logger.debug(f"Segment {i+1}: {len(segment_mistral_segments)} segments Mistral reçus")
+                
+                for seg in segment_mistral_segments:
+                    # Extraire les valeurs (gérer à la fois les dicts et les objets)
+                    if isinstance(seg, dict):
+                        seg_start = seg.get('start', 0)
+                        seg_end = seg.get('end', 0)
+                        seg_text = seg.get('text', '')
+                    else:
+                        seg_start = getattr(seg, 'start', 0)
+                        seg_end = getattr(seg, 'end', 0)
+                        seg_text = getattr(seg, 'text', '')
+                    
                     # Créer un nouveau dict avec timestamps ajustés
                     adjusted_seg = {
                         'start': seg_start + offset,
                         'end': seg_end + offset,
-                        'text': getattr(seg, 'text', seg.get('text', ''))
+                        'text': seg_text.strip() if seg_text else ''
                     }
+                    
+                    # Log si le texte est vide
+                    if not adjusted_seg['text']:
+                        logger.warning(f"Segment Mistral vide: [{adjusted_seg['start']:.1f}s - {adjusted_seg['end']:.1f}s]")
+                    
                     all_mistral_segments.append(adjusted_seg)
                 
                 if seg_result['text']:
@@ -364,31 +432,66 @@ class MistralVoxtralClient:
         """
         transcriptions = []
         
+        # Convertir tous les segments Mistral en dicts pour faciliter le traitement
+        mistral_dicts = []
+        for mistral_seg in mistral_segments:
+            if isinstance(mistral_seg, dict):
+                mistral_dicts.append(mistral_seg)
+            else:
+                # Objet avec attributs
+                mistral_dicts.append({
+                    'start': getattr(mistral_seg, 'start', 0),
+                    'end': getattr(mistral_seg, 'end', 0),
+                    'text': getattr(mistral_seg, 'text', '')
+                })
+        
+        logger.debug(f"Mapping: {len(mistral_dicts)} segments Mistral avec {len(diarization_segments)} segments de diarisation")
+        
+        # Trier les segments Mistral par timestamp pour faciliter la recherche
+        mistral_dicts.sort(key=lambda x: x.get('start', 0))
+        
         for diar_seg in diarization_segments:
-            # Trouver le segment Mistral correspondant (par timestamp)
-            matching_mistral = None
-            for mistral_seg in mistral_segments:
-                mistral_start = mistral_seg.get('start', 0) if isinstance(mistral_seg, dict) else getattr(mistral_seg, 'start', 0)
-                mistral_end = mistral_seg.get('end', float('inf')) if isinstance(mistral_seg, dict) else getattr(mistral_seg, 'end', float('inf'))
-                
-                # Vérifier si le segment de diarisation chevauche avec le segment Mistral
-                if mistral_start <= diar_seg['start'] < mistral_end:
-                    matching_mistral = mistral_seg
-                    break
+            diar_start = diar_seg['start']
+            diar_end = diar_seg['end']
             
-            mistral_text = ""
-            if matching_mistral:
-                if isinstance(matching_mistral, dict):
-                    mistral_text = matching_mistral.get('text', '')
-                else:
-                    mistral_text = getattr(matching_mistral, 'text', '')
+            # Trouver tous les segments Mistral qui chevauchent avec ce segment de diarisation
+            matching_texts = []
+            for mistral_seg in mistral_dicts:
+                mistral_start = mistral_seg.get('start', 0)
+                mistral_end = mistral_seg.get('end', float('inf'))
+                mistral_text = mistral_seg.get('text', '').strip()
+                
+                # Vérifier le chevauchement : le segment Mistral chevauche si :
+                # - Il commence avant la fin du segment de diarisation ET
+                # - Il se termine après le début du segment de diarisation
+                if mistral_start < diar_end and mistral_end > diar_start and mistral_text:
+                    # Calculer la proportion de chevauchement pour prioriser les segments les plus pertinents
+                    overlap_start = max(mistral_start, diar_start)
+                    overlap_end = min(mistral_end, diar_end)
+                    overlap_duration = overlap_end - overlap_start
+                    diar_duration = diar_end - diar_start
+                    
+                    # Si le chevauchement est significatif (> 50% du segment de diarisation)
+                    if overlap_duration > 0 and (overlap_duration / diar_duration) > 0.3:
+                        matching_texts.append(mistral_text)
+            
+            # Concaténer tous les textes correspondants
+            mistral_text = " ".join(matching_texts).strip()
+            
+            # Log si aucun texte trouvé pour déboguer
+            if not mistral_text:
+                logger.debug(f"Aucun texte trouvé pour segment diarisation [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')}")
             
             transcriptions.append({
-                "start": diar_seg['start'],
-                "end": diar_seg['end'],
-                "speaker": diar_seg['speaker'],
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
                 "text": mistral_text
             })
+        
+        # Statistiques de mapping
+        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
+        logger.info(f"Mapping terminé: {segments_with_text}/{len(transcriptions)} segments avec texte")
         
         return transcriptions
     
