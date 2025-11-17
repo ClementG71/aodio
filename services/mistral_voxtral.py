@@ -607,17 +607,19 @@ class MistralVoxtralClient:
                 has_other_speaker_between = False
                 if gap > 0:
                     # Chercher s'il y a un segment d'un autre speaker entre current_end et seg_start
+                    # Un segment est "entre" s'il chevauche l'intervalle [current_end, seg_start]
                     for other_seg in sorted_segments:
                         other_start = other_seg.get('start', 0)
                         other_end = other_seg.get('end', 0)
                         other_speaker = other_seg.get('speaker', 'UNKNOWN')
                         
-                        # Vérifier si ce segment se trouve entre current_end et seg_start
-                        # et qu'il est d'un speaker différent
+                        # Vérifier si ce segment d'un autre speaker chevauche l'intervalle
+                        # Un segment chevauche si : il commence avant seg_start ET se termine après current_end
                         if (other_speaker != current_speaker and 
                             other_start < seg_start and 
                             other_end > current_end):
                             has_other_speaker_between = True
+                            logger.debug(f"Speaker {other_speaker} parle entre {current_speaker} [{current_end:.1f}s - {seg_start:.1f}s], pas de regroupement")
                             break
                 
                 # Regrouper si même speaker, gap <= max_gap_seconds, et aucun autre speaker entre les deux
