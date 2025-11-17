@@ -316,7 +316,9 @@ class MistralVoxtralClient:
                     # Créer un segment audio fictif pour la distribution
                     audio_duration = self._get_audio_duration(audio_path)
                     fake_audio_segments = [{"start_time": 0, "end_time": audio_duration}]
-                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, diarization_segments)
+                    # Regrouper les segments de diarisation avant distribution
+                    merged_diarization = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
+                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, merged_diarization)
                 else:
                     # Mapping avec diarisation
                     transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
@@ -422,7 +424,9 @@ class MistralVoxtralClient:
             if len(all_mistral_segments) == 0 and full_text_parts:
                 logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
                 full_text = " ".join(full_text_parts)
-                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, diarization_segments)
+                # Regrouper les segments de diarisation avant distribution
+                merged_diarization = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
+                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, merged_diarization)
             else:
                 # Mapping avec diarisation
                 transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
@@ -559,6 +563,79 @@ class MistralVoxtralClient:
         
         return transcriptions
     
+    def _merge_consecutive_diarization_segments(self, diarization_segments: List[Dict[str, Any]], 
+                                               max_gap_seconds: float = 10.0) -> List[Dict[str, Any]]:
+        """
+        Regroupe les segments consécutifs de diarisation du même speaker
+        
+        Args:
+            diarization_segments: Liste des segments de diarisation avec start, end, speaker
+            max_gap_seconds: Gap maximum en secondes entre deux segments pour les regrouper (défaut: 10s)
+            
+        Returns:
+            list: Segments regroupés avec même structure
+        """
+        if not diarization_segments:
+            return []
+        
+        # Trier les segments par timestamp pour s'assurer qu'ils sont dans l'ordre chronologique
+        sorted_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        merged_segments = []
+        current_group = None
+        
+        # Calculer la durée moyenne avant regroupement pour les logs
+        avg_duration_before = sum(seg.get('end', 0) - seg.get('start', 0) for seg in sorted_segments) / len(sorted_segments) if sorted_segments else 0
+        
+        for seg in sorted_segments:
+            seg_start = seg.get('start', 0)
+            seg_end = seg.get('end', 0)
+            seg_speaker = seg.get('speaker', 'UNKNOWN')
+            
+            if current_group is None:
+                # Premier segment, initialiser le groupe
+                current_group = {
+                    'start': seg_start,
+                    'end': seg_end,
+                    'speaker': seg_speaker
+                }
+            else:
+                # Vérifier si on peut regrouper avec le groupe actuel
+                current_speaker = current_group.get('speaker', 'UNKNOWN')
+                current_end = current_group.get('end', 0)
+                gap = seg_start - current_end
+                
+                # Regrouper si même speaker et gap <= max_gap_seconds
+                if current_speaker == seg_speaker and gap <= max_gap_seconds:
+                    # Fusionner : garder le start du premier, mettre à jour le end avec le dernier
+                    current_group['end'] = seg_end
+                else:
+                    # Finaliser le groupe actuel et commencer un nouveau groupe
+                    merged_segments.append(current_group)
+                    current_group = {
+                        'start': seg_start,
+                        'end': seg_end,
+                        'speaker': seg_speaker
+                    }
+        
+        # Ajouter le dernier groupe
+        if current_group is not None:
+            merged_segments.append(current_group)
+        
+        # Calculer la durée moyenne après regroupement pour les logs
+        avg_duration_after = sum(seg.get('end', 0) - seg.get('start', 0) for seg in merged_segments) / len(merged_segments) if merged_segments else 0
+        
+        logger.info(f"Regroupement segments: {len(sorted_segments)} -> {len(merged_segments)} segments")
+        logger.info(f"Durée moyenne avant: {avg_duration_before:.1f}s, après: {avg_duration_after:.1f}s")
+        
+        # Log les premiers segments regroupés pour déboguer
+        if merged_segments:
+            for i, merged_seg in enumerate(merged_segments[:3]):
+                duration = merged_seg.get('end', 0) - merged_seg.get('start', 0)
+                logger.debug(f"Segment regroupé {i+1}: [{merged_seg.get('start', 0):.1f}s - {merged_seg.get('end', 0):.1f}s] speaker={merged_seg.get('speaker', 'UNKNOWN')} durée={duration:.1f}s")
+        
+        return merged_segments
+    
     def _distribute_text_by_diarization(self, full_text: str, 
                                        audio_segments: List[Dict[str, Any]],
                                        diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -575,6 +652,13 @@ class MistralVoxtralClient:
             list: Segments mappés avec speaker et texte distribué
         """
         logger.info(f"Distribution du texte complet ({len(full_text)} caractères) selon {len(diarization_segments)} segments de diarisation")
+        
+        # Regrouper les segments consécutifs du même speaker (gap max 10s)
+        merged_segments = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
+        logger.info(f"Segments regroupés: {len(diarization_segments)} -> {len(merged_segments)}")
+        
+        # Utiliser merged_segments au lieu de diarization_segments pour la suite
+        diarization_segments = merged_segments
         
         # Calculer la durée totale de l'audio
         total_duration = 0
