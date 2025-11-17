@@ -36,6 +36,21 @@ class LLMProcessor:
         try:
             logger.info("Démarrage du mapping des locuteurs")
             
+            # Vérifier que la transcription contient des segments
+            segments = transcription_result.get('segments', [])
+            if not segments:
+                logger.error("Aucun segment dans le résultat de transcription!")
+                return {}
+            
+            # Vérifier qu'il y a du texte dans au moins quelques segments
+            segments_with_text = sum(1 for seg in segments if seg.get('text', '').strip())
+            logger.info(f"Segments pour mapping: {len(segments)} total, {segments_with_text} avec texte")
+            
+            if segments_with_text == 0:
+                logger.error("Aucun segment ne contient de texte! Le mapping ne peut pas fonctionner.")
+                # Retourner un mapping vide ou basé uniquement sur les labels
+                return {}
+            
             # Lecture de la liste des participants si fournie
             participants_list = ""
             if liste_participants_path:
@@ -47,6 +62,9 @@ class LLMProcessor:
             
             # Préparation de la transcription pour l'analyse
             segments_text = self._format_segments_for_mapping(transcription_result)
+            
+            # Log du texte formaté pour déboguer (premiers 500 caractères)
+            logger.debug(f"Texte formaté pour mapping (premiers 500 caractères): {segments_text[:500]}")
             
             # Construction du prompt
             prompt = f"""Tu es un assistant qui analyse des transcriptions de réunions pour identifier les locuteurs.
@@ -113,10 +131,24 @@ TRANSCRIPTION :
         try:
             logger.info("Génération du pré-compte rendu")
             
+            # Vérifier que la transcription contient des segments
+            segments = transcription_result.get('segments', [])
+            if not segments:
+                logger.error("Aucun segment dans le résultat de transcription pour le pré-CR!")
+                return "Aucune transcription disponible."
+            
             # Formatage de la transcription avec mapping des locuteurs
             formatted_transcription = self._format_transcription_with_speakers(
                 transcription_result, speaker_mapping
             )
+            
+            # Vérifier que le texte formaté n'est pas vide
+            if not formatted_transcription or formatted_transcription.strip() == "":
+                logger.error("Le texte formaté pour le pré-CR est vide!")
+                return "Aucune transcription textuelle disponible. Les segments de diarisation ont été détectés mais aucun texte n'a été transcrit."
+            
+            # Log du texte formaté pour déboguer (premiers 1000 caractères)
+            logger.debug(f"Texte formaté pour pré-CR (premiers 1000 caractères): {formatted_transcription[:1000]}")
             
             prompt = f"""Objectif :
 - Transformer la transcription brute verbatim en un document professionnel lisible
@@ -231,15 +263,29 @@ TRANSCRIPTION (pour vérification) :
         """Formate les segments pour l'analyse de mapping"""
         segments = transcription_result.get('segments', [])
         formatted = []
+        segments_with_text = 0
+        segments_without_text = 0
         
         for seg in segments:
             speaker = seg.get('speaker', 'UNKNOWN')
-            text = seg.get('text', '')
+            text = seg.get('text', '').strip()
             start = seg.get('start', 0)
             end = seg.get('end', 0)
             
+            # Compter les segments avec/sans texte
+            if text:
+                segments_with_text += 1
+            else:
+                segments_without_text += 1
+            
             time_str = f"[{self._format_time(start)} - {self._format_time(end)}]"
-            formatted.append(f"{time_str} {speaker}: {text}")
+            # Inclure même les segments vides pour le contexte temporel
+            formatted.append(f"{time_str} {speaker}: {text if text else '[silence ou texte non transcrit]'}")
+        
+        logger.info(f"Formatage segments pour mapping: {segments_with_text} avec texte, {segments_without_text} sans texte sur {len(segments)} total")
+        
+        if segments_with_text == 0:
+            logger.warning("ATTENTION: Aucun segment ne contient de texte! Le mapping ne pourra pas fonctionner correctement.")
         
         return "\n".join(formatted)
     
@@ -248,15 +294,29 @@ TRANSCRIPTION (pour vérification) :
         """Formate la transcription avec les noms réels des locuteurs"""
         segments = transcription_result.get('segments', [])
         formatted = []
+        segments_with_text = 0
+        total_text_length = 0
         
         for seg in segments:
             speaker_label = seg.get('speaker', 'UNKNOWN')
             speaker_name = speaker_mapping.get(speaker_label, speaker_label)
-            text = seg.get('text', '')
+            text = seg.get('text', '').strip()
             start = seg.get('start', 0)
             
+            if text:
+                segments_with_text += 1
+                total_text_length += len(text)
+            
             time_str = self._format_time(start)
-            formatted.append(f"[{time_str}] {speaker_name}: {text}")
+            # Ne pas inclure les segments complètement vides dans le pré-CR
+            if text:
+                formatted.append(f"[{time_str}] {speaker_name}: {text}")
+        
+        logger.info(f"Formatage transcription pour pré-CR: {segments_with_text} segments avec texte ({total_text_length} caractères) sur {len(segments)} total")
+        
+        if segments_with_text == 0:
+            logger.error("ERREUR CRITIQUE: Aucun segment ne contient de texte! Le pré-CR sera vide.")
+            return "Aucune transcription textuelle disponible. Les segments de diarisation ont été détectés mais aucun texte n'a été transcrit."
         
         return "\n".join(formatted)
     
