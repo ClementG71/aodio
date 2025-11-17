@@ -6,6 +6,7 @@ import os
 import logging
 import time
 import subprocess
+import re
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
@@ -655,6 +656,145 @@ class MistralVoxtralClient:
         
         return merged_segments
     
+    def _distribute_text_by_linguistic_cues(self, full_text: str,
+                                           diarization_segments: List[Dict[str, Any]],
+                                           total_speech_duration: float) -> List[Dict[str, Any]]:
+        """
+        Distribue le texte complet selon les segments de diarisation en utilisant des indices linguistiques
+        (ponctuation forte pour découper en phrases complètes)
+        
+        Args:
+            full_text: Texte complet de la transcription
+            diarization_segments: Segments de diarisation avec speakers (déjà regroupés)
+            total_speech_duration: Durée totale de parole en secondes
+            
+        Returns:
+            list: Segments mappés avec speaker et texte distribué par phrases complètes
+        """
+        logger.info(f"Distribution linguistique: {len(full_text)} caractères sur {len(diarization_segments)} segments")
+        
+        # Découper le texte en phrases basées sur la ponctuation forte (. ! ?)
+        # Pattern: ponctuation forte suivie d'un espace ou fin de texte
+        # On garde la ponctuation avec la phrase précédente
+        sentence_pattern = r'([.!?])\s+'
+        sentences = re.split(sentence_pattern, full_text)
+        
+        # Reconstruire les phrases complètes avec leur ponctuation
+        complete_sentences = []
+        i = 0
+        while i < len(sentences):
+            sentence = sentences[i].strip()
+            if i + 1 < len(sentences):
+                # Ajouter la ponctuation si présente
+                punctuation = sentences[i + 1]
+                sentence += punctuation
+                i += 2
+            else:
+                i += 1
+            
+            if sentence:
+                complete_sentences.append(sentence)
+        
+        # Filtrer les phrases vides
+        complete_sentences = [s.strip() for s in complete_sentences if s.strip()]
+        
+        total_sentences = len(complete_sentences)
+        logger.info(f"Découpage en phrases: {total_sentences} phrases détectées")
+        
+        if total_sentences == 0:
+            logger.warning("Aucune phrase détectée dans le texte, utilisation de la distribution par mots")
+            # Fallback: utiliser les mots si aucune phrase n'est détectée
+            words = full_text.split()
+            total_words = len(words)
+            text_index = 0
+            transcriptions = []
+            
+            for diar_seg in diarization_segments:
+                diar_start = diar_seg.get('start', 0)
+                diar_end = diar_seg.get('end', 0)
+                diar_duration = diar_end - diar_start
+                
+                if diar_duration > 0 and total_speech_duration > 0:
+                    words_for_segment = int((diar_duration / total_speech_duration) * total_words)
+                else:
+                    words_for_segment = 0
+                
+                if words_for_segment > 0 and text_index < total_words:
+                    segment_words = words[text_index:text_index + words_for_segment]
+                    segment_text = " ".join(segment_words)
+                    text_index += words_for_segment
+                else:
+                    segment_text = ""
+                
+                transcriptions.append({
+                    "start": diar_start,
+                    "end": diar_end,
+                    "speaker": diar_seg.get('speaker', 'UNKNOWN'),
+                    "text": segment_text
+                })
+            
+            # Ajouter les mots restants au dernier segment
+            if text_index < total_words and transcriptions:
+                remaining_words = words[text_index:]
+                remaining_text = " ".join(remaining_words)
+                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
+            
+            return transcriptions
+        
+        # Distribuer les phrases aux segments de diarisation proportionnellement à leur durée
+        transcriptions = []
+        sentence_index = 0
+        
+        for seg_idx, diar_seg in enumerate(diarization_segments):
+            diar_start = diar_seg.get('start', 0)
+            diar_end = diar_seg.get('end', 0)
+            diar_duration = diar_end - diar_start
+            
+            # Calculer le nombre de phrases attendues pour ce segment (proportionnel à sa durée)
+            if diar_duration > 0 and total_speech_duration > 0:
+                sentences_for_segment = (diar_duration / total_speech_duration) * total_sentences
+                # Arrondir pour avoir un nombre entier de phrases
+                # Utiliser max(0, ...) pour éviter les valeurs négatives, mais permettre 0 pour les très petits segments
+                sentences_count = max(0, int(round(sentences_for_segment)))
+            else:
+                sentences_count = 0
+            
+            # Extraire les phrases pour ce segment
+            segment_sentences = []
+            if sentences_count > 0 and sentence_index < total_sentences:
+                # Prendre les phrases suivantes dans l'ordre
+                end_index = min(sentence_index + sentences_count, total_sentences)
+                segment_sentences = complete_sentences[sentence_index:end_index]
+                sentence_index = end_index
+            
+            # Joindre les phrases avec un espace
+            segment_text = " ".join(segment_sentences).strip()
+            
+            # Log pour les premiers segments
+            if seg_idx < 3:
+                logger.debug(f"Segment {seg_idx + 1}: [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')} -> {len(segment_sentences)} phrases, texte: '{segment_text[:80]}...'")
+            
+            transcriptions.append({
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
+                "text": segment_text
+            })
+        
+        # Distribuer les phrases restantes sur les derniers segments
+        if sentence_index < total_sentences:
+            remaining_sentences = complete_sentences[sentence_index:]
+            remaining_text = " ".join(remaining_sentences).strip()
+            if transcriptions:
+                # Ajouter au dernier segment
+                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
+                logger.info(f"Ajout de {len(remaining_sentences)} phrases restantes au dernier segment")
+        
+        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
+        logger.info(f"Distribution linguistique terminée: {segments_with_text}/{len(transcriptions)} segments avec texte ({total_sentences} phrases distribuées)")
+        
+        return transcriptions
+    
     def _distribute_text_by_diarization(self, full_text: str, 
                                        audio_segments: List[Dict[str, Any]],
                                        diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -702,51 +842,13 @@ class MistralVoxtralClient:
             return [{"start": seg['start'], "end": seg['end'], "speaker": seg['speaker'], "text": ""} 
                    for seg in diarization_segments]
         
-        # Distribuer le texte proportionnellement à la durée de chaque segment de diarisation
-        transcriptions = []
-        text_index = 0
-        words = full_text.split()
-        total_words = len(words)
-        
-        logger.info(f"Distribution: {total_words} mots sur {total_speech_duration:.1f}s de parole totale")
-        
-        for diar_seg in diarization_segments:
-            diar_start = diar_seg.get('start', 0)
-            diar_end = diar_seg.get('end', 0)
-            diar_duration = diar_end - diar_start
-            
-            # Calculer le nombre de mots pour ce segment (proportionnel à sa durée)
-            if diar_duration > 0:
-                words_for_segment = int((diar_duration / total_speech_duration) * total_words)
-            else:
-                words_for_segment = 0
-            
-            # Extraire les mots pour ce segment
-            if words_for_segment > 0 and text_index < total_words:
-                segment_words = words[text_index:text_index + words_for_segment]
-                segment_text = " ".join(segment_words)
-                text_index += words_for_segment
-            else:
-                segment_text = ""
-            
-            transcriptions.append({
-                "start": diar_start,
-                "end": diar_end,
-                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
-                "text": segment_text
-            })
-        
-        # Distribuer les mots restants sur les derniers segments
-        if text_index < total_words:
-            remaining_words = words[text_index:]
-            remaining_text = " ".join(remaining_words)
-            if transcriptions:
-                # Ajouter au dernier segment
-                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
-                logger.info(f"Ajout de {len(remaining_words)} mots restants au dernier segment")
-        
-        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
-        logger.info(f"Distribution terminée: {segments_with_text}/{len(transcriptions)} segments avec texte")
+        # Distribuer le texte en utilisant des indices linguistiques (phrases complètes)
+        # au lieu d'une distribution proportionnelle mot par mot
+        transcriptions = self._distribute_text_by_linguistic_cues(
+            full_text, 
+            diarization_segments, 
+            total_speech_duration
+        )
         
         return transcriptions
     
