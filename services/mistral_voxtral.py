@@ -316,9 +316,8 @@ class MistralVoxtralClient:
                     # Créer un segment audio fictif pour la distribution
                     audio_duration = self._get_audio_duration(audio_path)
                     fake_audio_segments = [{"start_time": 0, "end_time": audio_duration}]
-                    # Regrouper les segments de diarisation avant distribution
-                    merged_diarization = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
-                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, merged_diarization)
+                    # Le regroupement est fait dans _distribute_text_by_diarization
+                    transcriptions = self._distribute_text_by_diarization(full_text, fake_audio_segments, diarization_segments)
                 else:
                     # Mapping avec diarisation
                     transcriptions = self._map_transcription_to_diarization(mistral_segments, diarization_segments)
@@ -424,9 +423,8 @@ class MistralVoxtralClient:
             if len(all_mistral_segments) == 0 and full_text_parts:
                 logger.warning("Aucun segment Mistral avec timestamps, utilisation du texte complet distribué selon la diarisation")
                 full_text = " ".join(full_text_parts)
-                # Regrouper les segments de diarisation avant distribution
-                merged_diarization = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
-                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, merged_diarization)
+                # Le regroupement est fait dans _distribute_text_by_diarization
+                transcriptions = self._distribute_text_by_diarization(full_text, audio_segments, diarization_segments)
             else:
                 # Mapping avec diarisation
                 transcriptions = self._map_transcription_to_diarization(all_mistral_segments, diarization_segments)
