@@ -562,13 +562,13 @@ class MistralVoxtralClient:
         return transcriptions
     
     def _merge_consecutive_diarization_segments(self, diarization_segments: List[Dict[str, Any]], 
-                                               max_gap_seconds: float = 10.0) -> List[Dict[str, Any]]:
+                                               max_gap_seconds: float = 5.0) -> List[Dict[str, Any]]:
         """
         Regroupe les segments consécutifs de diarisation du même speaker
         
         Args:
             diarization_segments: Liste des segments de diarisation avec start, end, speaker
-            max_gap_seconds: Gap maximum en secondes entre deux segments pour les regrouper (défaut: 10s)
+            max_gap_seconds: Gap maximum en secondes entre deux segments pour les regrouper (défaut: 5s)
             
         Returns:
             list: Segments regroupés avec même structure
@@ -585,7 +585,7 @@ class MistralVoxtralClient:
         # Calculer la durée moyenne avant regroupement pour les logs
         avg_duration_before = sum(seg.get('end', 0) - seg.get('start', 0) for seg in sorted_segments) / len(sorted_segments) if sorted_segments else 0
         
-        for seg in sorted_segments:
+        for i, seg in enumerate(sorted_segments):
             seg_start = seg.get('start', 0)
             seg_end = seg.get('end', 0)
             seg_speaker = seg.get('speaker', 'UNKNOWN')
@@ -603,8 +603,27 @@ class MistralVoxtralClient:
                 current_end = current_group.get('end', 0)
                 gap = seg_start - current_end
                 
-                # Regrouper si même speaker et gap <= max_gap_seconds
-                if current_speaker == seg_speaker and gap <= max_gap_seconds:
+                # Vérifier qu'aucun autre speaker ne parle entre les deux segments
+                has_other_speaker_between = False
+                if gap > 0:
+                    # Chercher s'il y a un segment d'un autre speaker entre current_end et seg_start
+                    for other_seg in sorted_segments:
+                        other_start = other_seg.get('start', 0)
+                        other_end = other_seg.get('end', 0)
+                        other_speaker = other_seg.get('speaker', 'UNKNOWN')
+                        
+                        # Vérifier si ce segment se trouve entre current_end et seg_start
+                        # et qu'il est d'un speaker différent
+                        if (other_speaker != current_speaker and 
+                            other_start < seg_start and 
+                            other_end > current_end):
+                            has_other_speaker_between = True
+                            break
+                
+                # Regrouper si même speaker, gap <= max_gap_seconds, et aucun autre speaker entre les deux
+                if (current_speaker == seg_speaker and 
+                    gap <= max_gap_seconds and 
+                    not has_other_speaker_between):
                     # Fusionner : garder le start du premier, mettre à jour le end avec le dernier
                     current_group['end'] = seg_end
                 else:
@@ -651,8 +670,8 @@ class MistralVoxtralClient:
         """
         logger.info(f"Distribution du texte complet ({len(full_text)} caractères) selon {len(diarization_segments)} segments de diarisation")
         
-        # Regrouper les segments consécutifs du même speaker (gap max 10s)
-        merged_segments = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=10.0)
+        # Regrouper les segments consécutifs du même speaker (gap max 5s, aucun autre speaker entre)
+        merged_segments = self._merge_consecutive_diarization_segments(diarization_segments, max_gap_seconds=5.0)
         logger.info(f"Segments regroupés: {len(diarization_segments)} -> {len(merged_segments)}")
         
         # Utiliser merged_segments au lieu de diarization_segments pour la suite
