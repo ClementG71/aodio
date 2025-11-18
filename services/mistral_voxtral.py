@@ -8,6 +8,7 @@ import logging
 import time
 import subprocess
 import re
+import uuid
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
@@ -114,7 +115,9 @@ class MistralVoxtralClient:
             if seg_duration <= 0:
                 break
             
-            segment_path = output_dir / f"audio_segment_{i:04d}.wav"
+            # Générer un nom de fichier unique pour éviter les conflits
+            unique_id = str(uuid.uuid4())[:8]
+            segment_path = output_dir / f"audio_segment_{i:04d}_{unique_id}.wav"
             
             # Découper avec ffmpeg
             cmd = [
@@ -377,78 +380,46 @@ IMPORTANT :
 - Le texte doit être la transcription verbatim de ce qui est dit pendant ce segment temporel précis
 """
             
-            # Essayer d'abord avec URL si fournie (plus simple)
-            if audio_url:
+            # Utiliser URL si fournie, sinon uploader le fichier via l'API de fichiers de Mistral
+            audio_url_to_use = audio_url
+            
+            if not audio_url_to_use:
+                # Uploader le fichier local via l'API de fichiers de Mistral
+                logger.info("Upload du fichier audio vers Mistral AI...")
                 try:
-                    logger.info("Tentative transcription avec URL audio...")
-                    response = self.client.chat.complete(
-                        model="voxtral-small-latest",
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_audio",
-                                    "input_audio": audio_url,  # URL directement
-                                },
-                                {
-                                    "type": "text",
-                                    "text": prompt
-                                }
-                            ]
-                        }],
-                        temperature=0.0,  # Déterministe
-                        response_format={"type": "json_object"}  # Forcer JSON
-                    )
-                except Exception as url_error:
-                    # Fallback : fichier uploadé directement
-                    logger.warning(f"URL non supportée ({url_error}), utilisation fichier uploadé...")
                     with open(audio_path, "rb") as f:
-                        response = self.client.chat.complete(
-                            model="voxtral-small-latest",
-                            messages=[{
-                                "role": "user",
-                                "content": [
-                                    {
-                                        "type": "input_audio",
-                                        "input_audio": {
-                                            "content": f,
-                                            "file_name": os.path.basename(audio_path)
-                                        }
-                                    },
-                                    {
-                                        "type": "text",
-                                        "text": prompt
-                                    }
-                                ]
-                            }],
-                            temperature=0.0,
-                            response_format={"type": "json_object"}
+                        uploaded_file = self.client.files.upload(
+                            file=f,
+                            purpose="audio"
                         )
-            else:
-                # Pas d'URL fournie, utiliser fichier directement
-                logger.info("Utilisation fichier uploadé directement...")
-                with open(audio_path, "rb") as f:
-                    response = self.client.chat.complete(
-                        model="voxtral-small-latest",
-                        messages=[{
-                            "role": "user",
-                            "content": [
-                                {
-                                    "type": "input_audio",
-                                    "input_audio": {
-                                        "content": f,
-                                        "file_name": os.path.basename(audio_path)
-                                    }
-                                },
-                                {
-                                    "type": "text",
-                                    "text": prompt
-                                }
-                            ]
-                        }],
-                        temperature=0.0,
-                        response_format={"type": "json_object"}
-                    )
+                    # L'API retourne un ID de fichier, mais pour input_audio on a besoin d'une URL
+                    # Utiliser l'ID du fichier comme URL (format attendu par Mistral)
+                    audio_url_to_use = uploaded_file.id
+                    logger.info(f"Fichier uploadé avec ID: {audio_url_to_use}")
+                except Exception as upload_error:
+                    logger.error(f"Erreur lors de l'upload du fichier: {upload_error}")
+                    raise Exception(f"Impossible d'uploader le fichier audio: {upload_error}")
+            
+            # Utiliser l'URL (ou l'ID de fichier) pour la transcription
+            logger.info(f"Transcription avec audio: {audio_url_to_use}")
+            response = self.client.chat.complete(
+                model="voxtral-small-latest",
+                messages=[{
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_audio",
+                            "input_audio": audio_url_to_use,  # URL ou ID de fichier Mistral
+                        },
+                        {
+                            "type": "text",
+                            "text": prompt
+                        }
+                    ]
+                }],
+                temperature=0.0,  # Déterministe
+                response_format={"type": "json_object"}  # Forcer JSON
+            )
             
             # Parser la réponse JSON
             result_content = response.choices[0].message.content
