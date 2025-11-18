@@ -55,8 +55,14 @@ class LLMProcessor:
             participants_list = ""
             if liste_participants_path:
                 try:
-                    with open(liste_participants_path, 'r', encoding='utf-8') as f:
-                        participants_list = f.read()
+                    # Essayer UTF-8 d'abord, puis fallback sur latin-1 (Windows-1252 compatible)
+                    try:
+                        with open(liste_participants_path, 'r', encoding='utf-8') as f:
+                            participants_list = f.read()
+                    except UnicodeDecodeError:
+                        # Fallback sur latin-1 si UTF-8 échoue
+                        with open(liste_participants_path, 'r', encoding='latin-1') as f:
+                            participants_list = f.read()
                 except Exception as e:
                     logger.warning(f"Impossible de lire la liste des participants: {e}")
             
@@ -213,8 +219,14 @@ TRANSCRIPTION :
             releves_votes = ""
             if releves_votes_path:
                 try:
-                    with open(releves_votes_path, 'r', encoding='utf-8') as f:
-                        releves_votes = f.read()
+                    # Essayer UTF-8 d'abord, puis fallback sur latin-1 (Windows-1252 compatible)
+                    try:
+                        with open(releves_votes_path, 'r', encoding='utf-8') as f:
+                            releves_votes = f.read()
+                    except UnicodeDecodeError:
+                        # Fallback sur latin-1 si UTF-8 échoue
+                        with open(releves_votes_path, 'r', encoding='latin-1') as f:
+                            releves_votes = f.read()
                 except Exception as e:
                     logger.warning(f"Impossible de lire les relevés de votes: {e}")
             
