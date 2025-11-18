@@ -3,6 +3,7 @@ Service pour appeler directement l'API Mistral AI (Voxtral) pour la transcriptio
 Alternative au worker RunPod si vous préférez appeler directement Mistral AI
 """
 import os
+import json
 import logging
 import time
 import subprocess
@@ -39,6 +40,11 @@ class MistralVoxtralClient:
         # Pour être sûr, on découpe les fichiers > 8 minutes (estimation conservatrice)
         self.max_segment_duration = 600  # 10 minutes en secondes
         self.max_audio_duration_before_split = 480  # 8 minutes - déclenche le découpage
+        
+        # Configuration pour Voxtral-Small en mode chat (méthode principale)
+        self.use_voxtral_small_chat = True  # Activer Voxtral-Small chat comme méthode principale
+        self.max_duration_for_voxtral_small_chat = 900  # 15 minutes (marge sécurité pour limite 20 min)
+        self.voxtral_small_segment_duration = 900  # 15 minutes par segment pour fichiers longs
     
     def _get_audio_duration(self, audio_path: str) -> float:
         """
@@ -237,8 +243,9 @@ class MistralVoxtralClient:
                         diarization_segments: List[Dict[str, Any]],
                         language: str = "fr") -> Dict[str, Any]:
         """
-        Transcrit un fichier audio avec Voxtral Mini (voxtral-mini-latest)
-        Découpe automatiquement en segments de 10 minutes si nécessaire
+        Transcrit un fichier audio avec routage intelligent :
+        - Méthode principale : Voxtral-Small en mode chat avec contexte diarisation
+        - Fallback : Méthode classique (Voxtral Mini) en dernier recours
         
         Args:
             audio_path: Chemin du fichier audio local
@@ -248,19 +255,507 @@ class MistralVoxtralClient:
         Returns:
             dict: Transcription avec segments mappés aux speakers
         """
-        audio_path_obj = Path(audio_path)
-        output_dir = audio_path_obj.parent
-        
-        # Vérifier si le fichier est trop long et nécessite un découpage
-        duration = self._get_audio_duration(audio_path)
-        needs_split = duration > self.max_audio_duration_before_split
-        
-        if needs_split:
-            logger.info(f"Fichier audio long ({duration:.1f}s), découpage en segments de {self.max_segment_duration}s")
-            return self._transcribe_long_audio(audio_path, diarization_segments, language, output_dir)
+        # Utiliser Voxtral-Small chat comme méthode principale si activé
+        if self.use_voxtral_small_chat:
+            try:
+                duration = self._get_audio_duration(audio_path)
+                audio_url = self._get_audio_url(audio_path)
+                
+                if duration <= self.max_duration_for_voxtral_small_chat:
+                    logger.info(f"Fichier court ({duration:.1f}s), utilisation Voxtral-Small chat")
+                    return self._transcribe_with_voxtral_small_chat(
+                        audio_path, audio_url, diarization_segments, language
+                    )
+                else:
+                    logger.info(f"Fichier long ({duration:.1f}s), découpage en segments avec Voxtral-Small")
+                    return self._transcribe_long_audio_with_voxtral_small(
+                        audio_path, audio_url, diarization_segments, language
+                    )
+            except Exception as e:
+                logger.error(f"Erreur avec Voxtral-Small chat: {e}, fallback sur méthode classique")
+                # Fallback sur méthode classique
+                return self._transcribe_audio_classic(audio_path, diarization_segments, language)
         else:
-            # Fichier court, transcription directe avec gestion d'erreur pour découpage automatique
+            # Méthode classique directement
+            return self._transcribe_audio_classic(audio_path, diarization_segments, language)
+    
+    def _get_audio_url(self, audio_path: str) -> str:
+        """
+        Génère l'URL publique de l'audio pour l'API Mistral
+        
+        Args:
+            audio_path: Chemin local du fichier audio
+            
+        Returns:
+            str: URL publique du fichier audio
+        """
+        app_base_url = os.getenv('RAILWAY_PUBLIC_DOMAIN') or os.getenv('APP_BASE_URL', 'http://localhost:5000')
+        if not app_base_url.startswith('http'):
+            app_base_url = f"https://{app_base_url}"
+        
+        # Extraire le chemin relatif depuis audio_path
+        # Exemple: uploads/session_id/audio_processed.wav
+        path_parts = Path(audio_path).parts
+        if 'uploads' in path_parts:
+            idx = path_parts.index('uploads')
+            # Construire l'URL: https://domain.com/files/session_id/audio_processed.wav
+            return f"{app_base_url}/files/{'/'.join(path_parts[idx+1:])}"
+        
+        # Fallback : utiliser le nom du fichier
+        return f"{app_base_url}/files/{Path(audio_path).name}"
+    
+    def _transcribe_with_voxtral_small_chat(self, audio_path: str,
+                                           audio_url: Optional[str],
+                                           diarization_segments: List[Dict[str, Any]],
+                                           language: str = "fr") -> Dict[str, Any]:
+        """
+        Transcription avec Voxtral-Small en mode chat
+        Fournit l'audio + segments de diarisation comme contexte
+        Obtient directement un format structuré avec attribution correcte
+        
+        Args:
+            audio_path: Chemin local du fichier audio
+            audio_url: URL publique du fichier audio
+            diarization_segments: Segments de diarisation
+            language: Langue de l'audio
+            
+        Returns:
+            dict: Transcription avec segments mappés aux speakers
+        """
+        try:
+            # Formater les segments de diarisation pour le prompt
+            diarization_context = self._format_diarization_for_prompt(diarization_segments)
+            
+            # Construire le prompt avec instructions précises
+            prompt = f"""Tu es un assistant expert en transcription de réunions.
+
+TÂCHE :
+Transcris l'audio fourni en respectant STRICTEMENT les segments de diarisation fournis.
+Chaque segment de diarisation correspond à une intervention d'un locuteur spécifique.
+
+SEGMENTS DE DIARISATION (ordre chronologique) :
+{diarization_context}
+
+INSTRUCTIONS CRITIQUES :
+1. Pour chaque segment de diarisation, transcris UNIQUEMENT le texte prononcé pendant cette période temporelle exacte
+2. Respecte l'ordre chronologique strict des segments
+3. Si un segment de diarisation est très court (< 0.5s) ou silencieux, laisse le texte vide mais conserve le segment
+4. Si plusieurs segments consécutifs ont le même speaker, tu peux regrouper le texte mais conserve les timestamps individuels
+5. Ne tronque PAS les interventions au milieu d'une phrase - si une phrase commence dans un segment et se termine dans le suivant, répartis-la intelligemment
+6. Si tu détectes une incohérence (ex: même voix mais speaker différent sur segments adjacents), attribue au speaker le plus probable en te basant sur le contexte
+7. Le texte doit être la transcription verbatim (mot à mot) de ce qui est dit
+
+FORMAT DE RÉPONSE (JSON strict, aucun texte avant/après) :
+{{
+  "segments": [
+    {{
+      "start": 0.0,
+      "end": 5.2,
+      "speaker": "SPEAKER_00",
+      "text": "Texte transcrit pour ce segment exact"
+    }},
+    {{
+      "start": 5.2,
+      "end": 12.8,
+      "speaker": "SPEAKER_01",
+      "text": "Texte transcrit pour ce segment exact"
+    }}
+  ],
+  "full_text": "Texte complet de toute la transcription"
+}}
+
+IMPORTANT :
+- Les timestamps (start/end) doivent correspondre EXACTEMENT aux segments de diarisation fournis
+- Le speaker doit correspondre EXACTEMENT au speaker du segment de diarisation
+- Chaque segment de diarisation doit avoir un segment de transcription correspondant
+- Le texte doit être la transcription verbatim de ce qui est dit pendant ce segment temporel précis
+"""
+            
+            # Essayer d'abord avec URL si fournie (plus simple)
+            if audio_url:
+                try:
+                    logger.info("Tentative transcription avec URL audio...")
+                    response = self.client.chat.complete(
+                        model="voxtral-small-latest",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": audio_url,  # URL directement
+                                },
+                                {
+                                    "type": "text",
+                                    "text": prompt
+                                }
+                            ]
+                        }],
+                        temperature=0.0,  # Déterministe
+                        response_format={"type": "json_object"}  # Forcer JSON
+                    )
+                except Exception as url_error:
+                    # Fallback : fichier uploadé directement
+                    logger.warning(f"URL non supportée ({url_error}), utilisation fichier uploadé...")
+                    with open(audio_path, "rb") as f:
+                        response = self.client.chat.complete(
+                            model="voxtral-small-latest",
+                            messages=[{
+                                "role": "user",
+                                "content": [
+                                    {
+                                        "type": "input_audio",
+                                        "input_audio": {
+                                            "content": f,
+                                            "file_name": os.path.basename(audio_path)
+                                        }
+                                    },
+                                    {
+                                        "type": "text",
+                                        "text": prompt
+                                    }
+                                ]
+                            }],
+                            temperature=0.0,
+                            response_format={"type": "json_object"}
+                        )
+            else:
+                # Pas d'URL fournie, utiliser fichier directement
+                logger.info("Utilisation fichier uploadé directement...")
+                with open(audio_path, "rb") as f:
+                    response = self.client.chat.complete(
+                        model="voxtral-small-latest",
+                        messages=[{
+                            "role": "user",
+                            "content": [
+                                {
+                                    "type": "input_audio",
+                                    "input_audio": {
+                                        "content": f,
+                                        "file_name": os.path.basename(audio_path)
+                                    }
+                                },
+                                {
+                                    "type": "text",
+                                    "text": prompt
+                                }
+                            ]
+                        }],
+                        temperature=0.0,
+                        response_format={"type": "json_object"}
+                    )
+            
+            # Parser la réponse JSON
+            result_content = response.choices[0].message.content
+            result = json.loads(result_content)
+            
+            # Extraire les segments et le texte complet
+            transcriptions = result.get('segments', [])
+            full_text = result.get('full_text', '')
+            
+            logger.info(f"Voxtral-Small chat: {len(transcriptions)} segments reçus")
+            
+            # Valider et aligner avec les segments de diarisation
+            # S'assurer que tous les segments de diarisation ont un segment de transcription
+            transcriptions = self._align_transcription_with_diarization(
+                transcriptions, diarization_segments
+            )
+            
+            # Validation finale
+            self._validate_transcription_mapping(transcriptions, diarization_segments)
+            
+            return {
+                "segments": transcriptions,
+                "full_text": full_text
+            }
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Erreur parsing JSON de Voxtral-Small: {e}")
+            if 'result_content' in locals():
+                logger.error(f"Réponse reçue (premiers 500 caractères): {result_content[:500]}")
+            # Fallback sur méthode classique
+            return self._fallback_to_classic_transcription(audio_path, diarization_segments, language)
+        except Exception as e:
+            logger.error(f"Erreur avec Voxtral-Small chat: {e}", exc_info=True)
+            # Fallback sur méthode classique
+            return self._fallback_to_classic_transcription(audio_path, diarization_segments, language)
+    
+    def _format_diarization_for_prompt(self, diarization_segments: List[Dict[str, Any]]) -> str:
+        """
+        Formate les segments de diarisation pour le prompt
+        Format lisible et structuré
+        
+        Args:
+            diarization_segments: Liste des segments de diarisation
+            
+        Returns:
+            str: Texte formaté pour le prompt
+        """
+        lines = []
+        lines.append("Voici les segments de diarisation (détection automatique des locuteurs) :")
+        lines.append("")
+        
+        for i, seg in enumerate(diarization_segments, 1):
+            start = seg.get('start', 0)
+            end = seg.get('end', 0)
+            speaker = seg.get('speaker', 'UNKNOWN')
+            duration = end - start
+            
+            # Formater le temps en HH:MM:SS
+            start_str = self._format_time_for_prompt(start)
+            end_str = self._format_time_for_prompt(end)
+            
+            lines.append(f"Segment {i}: [{start_str} - {end_str}] {speaker} (durée: {duration:.1f}s)")
+        
+        return "\n".join(lines)
+    
+    def _format_time_for_prompt(self, seconds: float) -> str:
+        """
+        Formate les secondes en HH:MM:SS pour le prompt
+        
+        Args:
+            seconds: Nombre de secondes
+            
+        Returns:
+            str: Temps formaté HH:MM:SS
+        """
+        hours = int(seconds // 3600)
+        minutes = int((seconds % 3600) // 60)
+        secs = int(seconds % 60)
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    
+    def _align_transcription_with_diarization(self, transcriptions: List[Dict[str, Any]],
+                                              diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Aligne les transcriptions reçues de Voxtral-Small avec les segments de diarisation
+        S'assure que chaque segment de diarisation a un segment de transcription
+        
+        Args:
+            transcriptions: Segments de transcription de Voxtral-Small
+            diarization_segments: Segments de diarisation originaux
+            
+        Returns:
+            list: Segments alignés avec diarisation
+        """
+        # Créer un mapping par timestamp (avec tolérance)
+        transcription_map = {}
+        for trans in transcriptions:
+            trans_start = trans.get('start', 0)
+            trans_end = trans.get('end', 0)
+            # Utiliser le début comme clé (avec tolérance de 0.5s)
+            key = round(trans_start * 2) / 2  # Arrondir à 0.5s près
+            transcription_map[key] = trans
+        
+        # Aligner avec les segments de diarisation
+        aligned = []
+        for diar_seg in diarization_segments:
+            diar_start = diar_seg.get('start', 0)
+            diar_end = diar_seg.get('end', 0)
+            diar_speaker = diar_seg.get('speaker', 'UNKNOWN')
+            
+            # Chercher le segment de transcription le plus proche
+            best_match = None
+            best_distance = float('inf')
+            
+            for trans in transcriptions:
+                trans_start = trans.get('start', 0)
+                trans_end = trans.get('end', 0)
+                
+                # Distance = différence de début + différence de fin
+                distance = abs(trans_start - diar_start) + abs(trans_end - diar_end)
+                
+                # Tolérance : si la distance est < 2 secondes, c'est probablement le bon segment
+                if distance < best_distance and distance < 2.0:
+                    best_distance = distance
+                    best_match = trans
+            
+            if best_match:
+                # Utiliser le texte de la transcription mais les timestamps de la diarisation
+                aligned.append({
+                    "start": diar_start,  # Utiliser les timestamps de diarisation (plus précis)
+                    "end": diar_end,
+                    "speaker": diar_speaker,  # Utiliser le speaker de diarisation (garanti cohérent)
+                    "text": best_match.get('text', '').strip()
+                })
+            else:
+                # Segment sans transcription correspondante
+                aligned.append({
+                    "start": diar_start,
+                    "end": diar_end,
+                    "speaker": diar_speaker,
+                    "text": ""
+                })
+                if len(aligned) <= 5:  # Logger seulement les premiers
+                    logger.debug(f"Aucune transcription trouvée pour segment diarisation [{diar_start:.1f}s-{diar_end:.1f}s] {diar_speaker}")
+        
+        return aligned
+    
+    def _transcribe_long_audio_with_voxtral_small(self, audio_path: str,
+                                                  audio_url: Optional[str],
+                                                  diarization_segments: List[Dict[str, Any]],
+                                                  language: str = "fr") -> Dict[str, Any]:
+        """
+        Transcription de fichiers longs avec découpage intelligent
+        Chaque segment est traité avec Voxtral-Small en mode chat avec son contexte de diarisation
+        
+        Args:
+            audio_path: Chemin du fichier audio complet
+            audio_url: URL publique du fichier audio
+            diarization_segments: Segments de diarisation complets
+            language: Langue de l'audio
+            
+        Returns:
+            dict: Transcription complète avec segments mappés
+        """
+        duration = self._get_audio_duration(audio_path)
+        output_dir = Path(audio_path).parent
+        
+        # Découper l'audio en segments de 15 minutes
+        audio_segments = self._split_audio_into_segments(
+            audio_path, output_dir, self.voxtral_small_segment_duration
+        )
+        
+        all_transcriptions = []
+        full_text_parts = []
+        
+        try:
+            for i, seg_info in enumerate(audio_segments):
+                seg_start = seg_info['start_time']
+                seg_end = seg_info['end_time']
+                
+                logger.info(f"Traitement segment {i+1}/{len(audio_segments)}: {seg_start:.1f}s - {seg_end:.1f}s")
+                
+                # Filtrer les segments de diarisation qui appartiennent à ce segment audio
+                relevant_diarization = [
+                    d for d in diarization_segments
+                    if d.get('start', 0) < seg_end and d.get('end', 0) > seg_start
+                ]
+                
+                if not relevant_diarization:
+                    logger.warning(f"Aucun segment de diarisation pour le segment audio {i+1}")
+                    continue
+                
+                # Ajuster les timestamps des segments de diarisation pour ce segment audio
+                # (relatifs au début du segment audio)
+                adjusted_diarization = []
+                for d in relevant_diarization:
+                    # Calculer les timestamps relatifs au segment audio
+                    rel_start = max(0, d.get('start', 0) - seg_start)
+                    rel_end = min(seg_end - seg_start, d.get('end', 0) - seg_start)
+                    
+                    adjusted_diarization.append({
+                        'start': rel_start,
+                        'end': rel_end,
+                        'speaker': d.get('speaker', 'UNKNOWN')
+                    })
+                
+                # Pour les segments découpés, utiliser le fichier directement (pas d'URL)
+                # car les segments temporaires ne sont pas servis via Flask
+                segment_url = None  # Pas d'URL pour les segments temporaires
+                
+                # Transcrir ce segment avec Voxtral-Small en mode chat
+                try:
+                    segment_result = self._transcribe_with_voxtral_small_chat(
+                        seg_info['path'],
+                        segment_url,  # None = utiliser fichier directement
+                        adjusted_diarization,
+                        language
+                    )
+                    
+                    # Ajuster les timestamps pour le fichier complet
+                    for trans in segment_result.get('segments', []):
+                        trans['start'] += seg_start
+                        trans['end'] += seg_start
+                        all_transcriptions.append(trans)
+                    
+                    if segment_result.get('full_text'):
+                        full_text_parts.append(segment_result['full_text'])
+                        
+                except Exception as e:
+                    logger.error(f"Erreur segment {i+1} avec Voxtral-Small: {e}, fallback méthode classique")
+                    # Fallback : utiliser méthode classique pour ce segment
+                    fallback_result = self._transcribe_segment(seg_info['path'], language)
+                    
+                    # Mapper avec diarisation (méthode classique)
+                    mistral_segments = fallback_result.get('segments', [])
+                    for seg in mistral_segments:
+                        seg['start'] += seg_start
+                        seg['end'] += seg_start
+                    
+                    # Utiliser le mapping hybride existant
+                    segment_transcriptions = self._map_transcription_to_diarization_hybrid(
+                        mistral_segments, relevant_diarization, fallback_result.get('text', '')
+                    )
+                    
+                    # Ajuster timestamps
+                    for trans in segment_transcriptions:
+                        trans['start'] += seg_start
+                        trans['end'] += seg_start
+                        all_transcriptions.append(trans)
+                    
+                    if fallback_result.get('text'):
+                        full_text_parts.append(fallback_result['text'])
+            
+            # Trier par timestamp
+            all_transcriptions.sort(key=lambda x: x.get('start', 0))
+            
+            # Validation finale
+            self._validate_transcription_mapping(all_transcriptions, diarization_segments)
+            
+            return {
+                "segments": all_transcriptions,
+                "full_text": " ".join(full_text_parts)
+            }
+            
+        finally:
+            # Nettoyer les segments temporaires
+            for seg_info in audio_segments:
+                try:
+                    if os.path.exists(seg_info['path']):
+                        os.remove(seg_info['path'])
+                        logger.debug(f"Segment temporaire supprimé: {seg_info['path']}")
+                except Exception as e:
+                    logger.warning(f"Impossible de supprimer le segment {seg_info['path']}: {e}")
+    
+    def _transcribe_audio_classic(self, audio_path: str,
+                                  diarization_segments: List[Dict[str, Any]],
+                                  language: str = "fr") -> Dict[str, Any]:
+        """
+        Méthode classique de transcription (fallback)
+        Utilise Voxtral Mini via l'endpoint de transcription
+        
+        Args:
+            audio_path: Chemin du fichier audio
+            diarization_segments: Segments de diarisation
+            language: Langue de l'audio
+            
+        Returns:
+            dict: Transcription avec segments mappés
+        """
+        logger.info("Utilisation de la méthode classique de transcription")
+        duration = self._get_audio_duration(audio_path)
+        if duration <= self.max_audio_duration_before_split:
             return self._transcribe_short_audio(audio_path, diarization_segments, language)
+        else:
+            output_dir = Path(audio_path).parent
+            return self._transcribe_long_audio(audio_path, diarization_segments, language, output_dir)
+    
+    def _fallback_to_classic_transcription(self, audio_path: str,
+                                          diarization_segments: List[Dict[str, Any]],
+                                          language: str) -> Dict[str, Any]:
+        """
+        Fallback sur la méthode de transcription classique
+        Appelé en cas d'erreur avec Voxtral-Small chat
+        
+        Args:
+            audio_path: Chemin du fichier audio
+            diarization_segments: Segments de diarisation
+            language: Langue de l'audio
+            
+        Returns:
+            dict: Transcription avec segments mappés
+        """
+        logger.info("Fallback sur méthode de transcription classique")
+        return self._transcribe_audio_classic(audio_path, diarization_segments, language)
     
     def _transcribe_short_audio(self, audio_path: str,
                                diarization_segments: List[Dict[str, Any]],
