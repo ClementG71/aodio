@@ -81,31 +81,37 @@ class MistralVoxtralClient:
             logger.error(f"Impossible d'obtenir la durée de l'audio: {e}")
             return 0.0
     
-    def _split_audio_into_segments(self, audio_path: str, output_dir: Path) -> List[Dict[str, Any]]:
+    def _split_audio_into_segments(self, audio_path: str, output_dir: Path, 
+                                   segment_duration: Optional[float] = None) -> List[Dict[str, Any]]:
         """
-        Découpe un fichier audio en segments de 10 minutes
+        Découpe un fichier audio en segments
         
         Args:
             audio_path: Chemin du fichier audio complet
             output_dir: Dossier où sauvegarder les segments
+            segment_duration: Durée de chaque segment en secondes (défaut: self.max_segment_duration)
             
         Returns:
             list: Liste de dict avec 'path', 'start_time', 'end_time' pour chaque segment
         """
+        # Utiliser la durée fournie ou la durée par défaut
+        if segment_duration is None:
+            segment_duration = self.max_segment_duration
+        
         segments = []
         duration = self._get_audio_duration(audio_path)
         
         if duration <= 0:
             raise ValueError(f"Impossible de déterminer la durée de l'audio: {audio_path}")
         
-        num_segments = int(duration / self.max_segment_duration) + (1 if duration % self.max_segment_duration > 0 else 0)
-        logger.info(f"Découpage de l'audio ({duration:.1f}s) en {num_segments} segments de {self.max_segment_duration}s")
+        num_segments = int(duration / segment_duration) + (1 if duration % segment_duration > 0 else 0)
+        logger.info(f"Découpage de l'audio ({duration:.1f}s) en {num_segments} segments de {segment_duration}s")
         
         for i in range(num_segments):
-            start_time = i * self.max_segment_duration
-            segment_duration = min(self.max_segment_duration, duration - start_time)
+            start_time = i * segment_duration
+            seg_duration = min(segment_duration, duration - start_time)
             
-            if segment_duration <= 0:
+            if seg_duration <= 0:
                 break
             
             segment_path = output_dir / f"audio_segment_{i:04d}.wav"
@@ -116,7 +122,7 @@ class MistralVoxtralClient:
                 '-threads', '0',
                 '-i', str(audio_path),
                 '-ss', str(start_time),
-                '-t', str(segment_duration),
+                '-t', str(seg_duration),
                 '-acodec', 'pcm_s16le',
                 '-ar', '16000',
                 '-ac', '1',
@@ -125,7 +131,7 @@ class MistralVoxtralClient:
                 str(segment_path)
             ]
             
-            logger.info(f"Création du segment {i+1}/{num_segments}: {start_time:.1f}s - {start_time + segment_duration:.1f}s")
+            logger.info(f"Création du segment {i+1}/{num_segments}: {start_time:.1f}s - {start_time + seg_duration:.1f}s")
             result = subprocess.run(cmd, capture_output=True, text=True, timeout=600)
             
             if result.returncode != 0:
@@ -135,7 +141,7 @@ class MistralVoxtralClient:
             segments.append({
                 'path': str(segment_path),
                 'start_time': start_time,
-                'end_time': start_time + segment_duration,
+                'end_time': start_time + seg_duration,
                 'index': i
             })
         
