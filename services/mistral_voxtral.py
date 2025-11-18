@@ -389,8 +389,10 @@ IMPORTANT :
                 try:
                     with open(audio_path, "rb") as f:
                         uploaded_file = self.client.files.upload(
-                            file=f,
-                            purpose="audio"
+                            file={
+                                "file_name": os.path.basename(audio_path),
+                                "content": f
+                            }
                         )
                     # L'API retourne un ID de fichier, mais pour input_audio on a besoin d'une URL
                     # Utiliser l'ID du fichier comme URL (format attendu par Mistral)
