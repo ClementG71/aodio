@@ -392,18 +392,22 @@ IMPORTANT :
                             file={
                                 "file_name": os.path.basename(audio_path),
                                 "content": f
-                            }
+                            },
+                            purpose="audio"
                         )
-                    # L'API retourne un ID de fichier, mais pour input_audio on a besoin d'une URL
-                    # Utiliser l'ID du fichier comme URL (format attendu par Mistral)
-                    audio_url_to_use = uploaded_file.id
-                    logger.info(f"Fichier uploadé avec ID: {audio_url_to_use}")
+                    # Obtenir une signed URL pour le fichier uploadé
+                    # input_audio nécessite une signed URL, pas juste l'ID
+                    signed_url_response = self.client.files.get_signed_url(
+                        file_id=uploaded_file.id
+                    )
+                    audio_url_to_use = signed_url_response.url
+                    logger.info(f"Fichier uploadé avec ID: {uploaded_file.id}, signed URL obtenue")
                 except Exception as upload_error:
                     logger.error(f"Erreur lors de l'upload du fichier: {upload_error}")
                     raise Exception(f"Impossible d'uploader le fichier audio: {upload_error}")
             
-            # Utiliser l'URL (ou l'ID de fichier) pour la transcription
-            logger.info(f"Transcription avec audio: {audio_url_to_use}")
+            # Utiliser la signed URL pour la transcription
+            logger.info(f"Transcription avec audio (signed URL): {audio_url_to_use[:50]}...")
             response = self.client.chat.complete(
                 model="voxtral-small-latest",
                 messages=[{
@@ -411,7 +415,7 @@ IMPORTANT :
                     "content": [
                         {
                             "type": "input_audio",
-                            "input_audio": audio_url_to_use,  # URL ou ID de fichier Mistral
+                            "input_audio": audio_url_to_use,  # Signed URL du fichier Mistral
                         },
                         {
                             "type": "text",
