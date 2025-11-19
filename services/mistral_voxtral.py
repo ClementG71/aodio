@@ -45,7 +45,7 @@ class MistralVoxtralClient:
         # Configuration pour Voxtral-Small en mode chat (méthode principale)
         self.use_voxtral_small_chat = True  # Activer Voxtral-Small chat comme méthode principale
         self.max_duration_for_voxtral_small_chat = 900  # 15 minutes (marge sécurité pour limite 20 min)
-        self.voxtral_small_segment_duration = 900  # 15 minutes par segment pour fichiers longs
+        self.voxtral_small_segment_duration = 600  # 10 minutes par segment pour rester sous 20 MB
     
     def _get_audio_duration(self, audio_path: str) -> float:
         """
@@ -380,34 +380,16 @@ IMPORTANT :
 - Le texte doit être la transcription verbatim de ce qui est dit pendant ce segment temporel précis
 """
             
-            # Utiliser URL si fournie, sinon uploader le fichier via l'API de fichiers de Mistral
+            # Utiliser URL si fournie, sinon générer URL Flask publique
             audio_url_to_use = audio_url
             
             if not audio_url_to_use:
-                # Uploader le fichier local via l'API de fichiers de Mistral
-                logger.info("Upload du fichier audio vers Mistral AI...")
-                try:
-                    with open(audio_path, "rb") as f:
-                        uploaded_file = self.client.files.upload(
-                            file={
-                                "file_name": os.path.basename(audio_path),
-                                "content": f
-                            },
-                            purpose="audio"
-                        )
-                    # Obtenir une signed URL pour le fichier uploadé
-                    # input_audio nécessite une signed URL, pas juste l'ID
-                    signed_url_response = self.client.files.get_signed_url(
-                        file_id=uploaded_file.id
-                    )
-                    audio_url_to_use = signed_url_response.url
-                    logger.info(f"Fichier uploadé avec ID: {uploaded_file.id}, signed URL obtenue")
-                except Exception as upload_error:
-                    logger.error(f"Erreur lors de l'upload du fichier: {upload_error}")
-                    raise Exception(f"Impossible d'uploader le fichier audio: {upload_error}")
+                # Générer URL Flask publique (réutilise l'infrastructure existante)
+                audio_url_to_use = self._get_audio_url(audio_path)
+                logger.info(f"URL Flask générée pour le fichier audio: {audio_url_to_use}")
             
-            # Utiliser la signed URL pour la transcription
-            logger.info(f"Transcription avec audio (signed URL): {audio_url_to_use[:50]}...")
+            # Utiliser l'URL Flask pour la transcription
+            logger.info(f"Transcription avec audio (URL Flask): {audio_url_to_use}")
             response = self.client.chat.complete(
                 model="voxtral-small-latest",
                 messages=[{
@@ -415,7 +397,7 @@ IMPORTANT :
                     "content": [
                         {
                             "type": "input_audio",
-                            "input_audio": audio_url_to_use,  # Signed URL du fichier Mistral
+                            "input_audio": audio_url_to_use,  # URL Flask publique
                         },
                         {
                             "type": "text",
@@ -631,9 +613,9 @@ IMPORTANT :
                         'speaker': d.get('speaker', 'UNKNOWN')
                     })
                 
-                # Pour les segments découpés, utiliser le fichier directement (pas d'URL)
-                # car les segments temporaires ne sont pas servis via Flask
-                segment_url = None  # Pas d'URL pour les segments temporaires
+                # Les segments temporaires sont dans le même dossier que le fichier original
+                # donc ils sont accessibles via la route Flask /files/
+                segment_url = None  # Sera généré automatiquement par _get_audio_url() si None
                 
                 # Transcrir ce segment avec Voxtral-Small en mode chat
                 try:
