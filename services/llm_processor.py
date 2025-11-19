@@ -230,7 +230,10 @@ TRANSCRIPTION :
                 except Exception as e:
                     logger.warning(f"Impossible de lire les relevés de votes: {e}")
             
-            formatted_transcription = self._format_segments_for_mapping(transcription_result)
+            # Utiliser uniquement les segments avec texte pour éviter les prompts trop longs
+            formatted_transcription = self._format_segments_with_text_only(
+                transcription_result, max_segments=100, max_chars=50000
+            )
             
             prompt = f"""Extrais les décisions prises durant la réunion en te basant strictement sur la feuille des relevés de votes fournie.
 
@@ -256,8 +259,8 @@ FORMAT DE RÉPONSE (JSON uniquement) :
 FEUILLE DES RELEVÉS DE VOTES :
 {releves_votes if releves_votes else "Aucune feuille de relevés de votes fournie"}
 
-TRANSCRIPTION (pour vérification) :
-{formatted_transcription[:5000]}  # Limité pour éviter la surcharge
+TRANSCRIPTION (pour vérification - segments avec texte uniquement) :
+{formatted_transcription}
 """
             
             response = self._call_claude_safe(prompt)
@@ -300,6 +303,65 @@ TRANSCRIPTION (pour vérification) :
             logger.warning("ATTENTION: Aucun segment ne contient de texte! Le mapping ne pourra pas fonctionner correctement.")
         
         return "\n".join(formatted)
+    
+    def _format_segments_with_text_only(self, transcription_result: Dict[str, Any],
+                                        max_segments: int = 100,
+                                        max_chars: int = 50000) -> str:
+        """
+        Formate uniquement les segments avec texte, avec limites pour éviter les prompts trop longs
+        
+        Args:
+            transcription_result: Résultat de la transcription
+            max_segments: Nombre maximum de segments à inclure
+            max_chars: Nombre maximum de caractères à inclure
+            
+        Returns:
+            str: Texte formaté avec uniquement les segments contenant du texte
+        """
+        segments = transcription_result.get('segments', [])
+        
+        # Filtrer uniquement les segments avec texte
+        segments_with_text = [seg for seg in segments if seg.get('text', '').strip()]
+        
+        logger.info(f"Formatage segments avec texte uniquement: {len(segments_with_text)} segments avec texte sur {len(segments)} total")
+        
+        if not segments_with_text:
+            logger.warning("Aucun segment avec texte trouvé!")
+            return "Aucune transcription textuelle disponible."
+        
+        # Limiter le nombre de segments
+        if len(segments_with_text) > max_segments:
+            logger.warning(f"Trop de segments avec texte ({len(segments_with_text)}), limitation à {max_segments}")
+            segments_with_text = segments_with_text[:max_segments]
+        
+        # Formater les segments
+        formatted = []
+        total_chars = 0
+        
+        for seg in segments_with_text:
+            speaker = seg.get('speaker', 'UNKNOWN')
+            text = seg.get('text', '').strip()
+            start = seg.get('start', 0)
+            end = seg.get('end', 0)
+            
+            time_str = f"[{self._format_time(start)} - {self._format_time(end)}]"
+            line = f"{time_str} {speaker}: {text}"
+            
+            # Vérifier la limite de caractères
+            if total_chars + len(line) > max_chars:
+                logger.warning(f"Limite de caractères atteinte ({max_chars}), troncature du texte")
+                remaining_chars = max_chars - total_chars
+                if remaining_chars > 100:  # Au moins 100 caractères pour le dernier segment
+                    line = line[:remaining_chars - 50] + "... [texte tronqué]"
+                    formatted.append(line)
+                break
+            
+            formatted.append(line)
+            total_chars += len(line) + 1  # +1 pour le \n
+        
+        result = "\n".join(formatted)
+        logger.info(f"Formatage terminé: {len(formatted)} segments, {len(result)} caractères")
+        return result
     
     def _format_transcription_with_speakers(self, transcription_result: Dict[str, Any],
                                           speaker_mapping: Dict[str, str]) -> str:

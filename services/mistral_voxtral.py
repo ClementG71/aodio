@@ -335,24 +335,26 @@ class MistralVoxtralClient:
             # Formater les segments de diarisation pour le prompt
             diarization_context = self._format_diarization_for_prompt(diarization_segments)
             
-            # Construire le prompt avec instructions précises
+            # Construire le prompt avec instructions strictes
             prompt = f"""Tu es un assistant expert en transcription de réunions.
 
 TÂCHE :
-Transcris l'audio fourni en respectant STRICTEMENT les segments de diarisation fournis.
+Transcris l'audio fourni en respectant STRICTEMENT et EXACTEMENT les segments de diarisation fournis.
 Chaque segment de diarisation correspond à une intervention d'un locuteur spécifique.
 
 SEGMENTS DE DIARISATION (ordre chronologique) :
 {diarization_context}
 
-INSTRUCTIONS CRITIQUES :
-1. Pour chaque segment de diarisation, transcris UNIQUEMENT le texte prononcé pendant cette période temporelle exacte
-2. Respecte l'ordre chronologique strict des segments
-3. Si un segment de diarisation est très court (< 0.5s) ou silencieux, laisse le texte vide mais conserve le segment
-4. Si plusieurs segments consécutifs ont le même speaker, tu peux regrouper le texte mais conserve les timestamps individuels
-5. Ne tronque PAS les interventions au milieu d'une phrase - si une phrase commence dans un segment et se termine dans le suivant, répartis-la intelligemment
-6. Si tu détectes une incohérence (ex: même voix mais speaker différent sur segments adjacents), attribue au speaker le plus probable en te basant sur le contexte
-7. Le texte doit être la transcription verbatim (mot à mot) de ce qui est dit
+INSTRUCTIONS CRITIQUES (STRICTES - À RESPECTER ABSOLUMENT) :
+1. Tu DOIS retourner EXACTEMENT un segment de transcription pour CHAQUE segment de diarisation fourni
+2. INTERDICTION ABSOLUE de regrouper ou fusionner des segments, même s'ils ont le même speaker
+3. INTERDICTION ABSOLUE de sauter ou ignorer un segment de diarisation
+4. Si un segment de diarisation est silencieux ou très court (< 0.5s), retourne quand même un segment avec texte vide ""
+5. Les timestamps (start/end) doivent correspondre EXACTEMENT aux segments de diarisation fournis (pas d'approximation)
+6. Le speaker doit correspondre EXACTEMENT au speaker du segment de diarisation
+7. L'ordre des segments doit être IDENTIQUE à l'ordre des segments de diarisation fournis
+8. Le texte doit être la transcription verbatim (mot à mot) de ce qui est dit pendant ce segment temporel précis
+9. Si une phrase commence dans un segment et se termine dans le suivant, répartis-la intelligemment entre les deux segments
 
 FORMAT DE RÉPONSE (JSON strict, aucun texte avant/après) :
 {{
@@ -373,11 +375,10 @@ FORMAT DE RÉPONSE (JSON strict, aucun texte avant/après) :
   "full_text": "Texte complet de toute la transcription"
 }}
 
-IMPORTANT :
-- Les timestamps (start/end) doivent correspondre EXACTEMENT aux segments de diarisation fournis
-- Le speaker doit correspondre EXACTEMENT au speaker du segment de diarisation
-- Chaque segment de diarisation doit avoir un segment de transcription correspondant
-- Le texte doit être la transcription verbatim de ce qui est dit pendant ce segment temporel précis
+VALIDATION OBLIGATOIRE :
+- Le nombre de segments retournés DOIT être EXACTEMENT égal au nombre de segments de diarisation fournis
+- Chaque segment de diarisation DOIT avoir un segment de transcription correspondant avec les mêmes timestamps
+- Aucun regroupement, fusion ou omission n'est autorisé
 """
             
             # Utiliser URL si fournie, sinon générer URL Flask publique
@@ -417,13 +418,25 @@ IMPORTANT :
             transcriptions = result.get('segments', [])
             full_text = result.get('full_text', '')
             
-            logger.info(f"Voxtral-Small chat: {len(transcriptions)} segments reçus")
+            logger.info(f"Voxtral-Small chat: {len(transcriptions)} segments reçus pour {len(diarization_segments)} segments de diarisation")
             
-            # Valider et aligner avec les segments de diarisation
-            # S'assurer que tous les segments de diarisation ont un segment de transcription
-            transcriptions = self._align_transcription_with_diarization(
-                transcriptions, diarization_segments
-            )
+            # Validation stricte : vérifier que le nombre de segments correspond
+            if len(transcriptions) != len(diarization_segments):
+                logger.warning(
+                    f"Voxtral-Small n'a pas respecté la diarisation strictement: "
+                    f"{len(transcriptions)} segments retournés au lieu de {len(diarization_segments)}. "
+                    f"Utilisation du fallback full_text pour garantir un segment par segment de diarisation."
+                )
+                # Fallback : distribuer le full_text selon les segments de diarisation
+                # Cela garantit qu'on a exactement un segment par segment de diarisation
+                transcriptions = self._distribute_text_by_chronological_order(
+                    full_text, diarization_segments
+                )
+            else:
+                # Aligner pour s'assurer de la correspondance exacte
+                transcriptions = self._align_transcription_with_diarization_strict(
+                    transcriptions, diarization_segments
+                )
             
             # Validation finale
             self._validate_transcription_mapping(transcriptions, diarization_segments)
@@ -552,6 +565,126 @@ IMPORTANT :
                 if len(aligned) <= 5:  # Logger seulement les premiers
                     logger.debug(f"Aucune transcription trouvée pour segment diarisation [{diar_start:.1f}s-{diar_end:.1f}s] {diar_speaker}")
         
+        return aligned
+    
+    def _align_transcription_with_diarization_strict(self, transcriptions: List[Dict[str, Any]],
+                                                     diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Aligne strictement les transcriptions avec les segments de diarisation
+        Garantit qu'il y a exactement un segment de transcription par segment de diarisation
+        
+        Si un segment de transcription couvre plusieurs segments de diarisation, distribue le texte proportionnellement.
+        Si plusieurs segments de transcription correspondent à un segment de diarisation, concatène le texte.
+        
+        Args:
+            transcriptions: Segments de transcription de Voxtral-Small (doit avoir le même nombre que diarization_segments)
+            diarization_segments: Segments de diarisation originaux
+            
+        Returns:
+            list: Segments alignés avec diarisation (un par segment de diarisation)
+        """
+        if len(transcriptions) != len(diarization_segments):
+            logger.warning(
+                f"Nombre de segments différent dans _align_transcription_with_diarization_strict: "
+                f"{len(transcriptions)} transcriptions vs {len(diarization_segments)} diarisation"
+            )
+        
+        # Trier par timestamp pour s'assurer de l'ordre chronologique
+        transcriptions = sorted(transcriptions, key=lambda x: x.get('start', 0))
+        diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        aligned = []
+        trans_index = 0
+        
+        for diar_seg in diarization_segments:
+            diar_start = diar_seg.get('start', 0)
+            diar_end = diar_seg.get('end', 0)
+            diar_speaker = diar_seg.get('speaker', 'UNKNOWN')
+            diar_duration = diar_end - diar_start
+            
+            # Chercher les segments de transcription qui correspondent à ce segment de diarisation
+            matching_texts = []
+            trans_index_start = trans_index
+            
+            # Parcourir les transcriptions pour trouver celles qui chevauchent avec ce segment de diarisation
+            while trans_index < len(transcriptions):
+                trans = transcriptions[trans_index]
+                trans_start = trans.get('start', 0)
+                trans_end = trans.get('end', 0)
+                
+                # Vérifier le chevauchement
+                if trans_start < diar_end and trans_end > diar_start:
+                    # Il y a chevauchement
+                    overlap_start = max(trans_start, diar_start)
+                    overlap_end = min(trans_end, diar_end)
+                    overlap_duration = overlap_end - overlap_start
+                    
+                    # Si le chevauchement est significatif (au moins 50% du segment de diarisation ou 0.5s)
+                    if overlap_duration >= max(0.5, diar_duration * 0.5):
+                        trans_text = trans.get('text', '').strip()
+                        if trans_text:
+                            # Calculer la proportion du texte à attribuer à ce segment de diarisation
+                            # Si le segment de transcription couvre plusieurs segments de diarisation,
+                            # on distribue proportionnellement
+                            trans_duration = trans_end - trans_start
+                            if trans_duration > 0:
+                                text_ratio = overlap_duration / trans_duration
+                                # Prendre une portion du texte proportionnelle au chevauchement
+                                # Approximation simple : prendre tout le texte si chevauchement > 80%
+                                if text_ratio >= 0.8:
+                                    matching_texts.append(trans_text)
+                                else:
+                                    # Prendre une portion du texte (approximation)
+                                    words = trans_text.split()
+                                    num_words = max(1, int(len(words) * text_ratio))
+                                    matching_texts.append(' '.join(words[:num_words]))
+                    
+                    # Si le segment de transcription se termine après ce segment de diarisation,
+                    # on continue à chercher d'autres segments
+                    if trans_end > diar_end:
+                        # Ne pas avancer l'index, ce segment peut aussi correspondre au suivant
+                        break
+                    else:
+                        # Ce segment de transcription est complètement couvert, passer au suivant
+                        trans_index += 1
+                elif trans_start >= diar_end:
+                    # Ce segment de transcription est après ce segment de diarisation, arrêter
+                    break
+                else:
+                    # Ce segment de transcription est avant ce segment de diarisation, passer au suivant
+                    trans_index += 1
+            
+            # Concaténer tous les textes correspondants
+            final_text = " ".join(matching_texts).strip()
+            
+            # Si aucun texte trouvé mais qu'on a des transcriptions, essayer de trouver le segment le plus proche
+            if not final_text and transcriptions:
+                # Chercher le segment de transcription le plus proche
+                best_match = None
+                best_distance = float('inf')
+                
+                for trans in transcriptions:
+                    trans_start = trans.get('start', 0)
+                    trans_end = trans.get('end', 0)
+                    
+                    # Distance = différence de début + différence de fin
+                    distance = abs(trans_start - diar_start) + abs(trans_end - diar_end)
+                    
+                    if distance < best_distance:
+                        best_distance = distance
+                        best_match = trans
+                
+                if best_match and best_distance < 5.0:  # Tolérance de 5 secondes
+                    final_text = best_match.get('text', '').strip()
+            
+            aligned.append({
+                "start": diar_start,
+                "end": diar_end,
+                "speaker": diar_speaker,
+                "text": final_text
+            })
+        
+        logger.info(f"Alignement strict terminé: {len(aligned)} segments (un par segment de diarisation)")
         return aligned
     
     def _transcribe_long_audio_with_voxtral_small(self, audio_path: str,
