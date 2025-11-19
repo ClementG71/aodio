@@ -5,7 +5,8 @@ Mapping des locuteurs, génération pré-CR, extraction des décisions
 import json
 import logging
 from typing import Dict, List, Any, Optional
-from anthropic import Anthropic
+from anthropic import Anthropic, RateLimitError, APIError
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 logger = logging.getLogger(__name__)
 
@@ -144,8 +145,9 @@ TRANSCRIPTION :
                 return "Aucune transcription disponible."
             
             # Formatage de la transcription avec mapping des locuteurs
-            formatted_transcription = self._format_transcription_with_speakers(
-                transcription_result, speaker_mapping
+            # Utiliser une version limitée pour éviter les erreurs de rate limit
+            formatted_transcription = self._format_segments_with_text_only(
+                transcription_result, max_segments=100, max_chars=50000
             )
             
             # Vérifier que le texte formaté n'est pas vide
@@ -401,9 +403,14 @@ TRANSCRIPTION (pour vérification - segments avec texte uniquement) :
         secs = int(seconds % 60)
         return f"{hours:02d}:{minutes:02d}:{secs:02d}"
     
+    @retry(
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=2, min=4, max=60),
+        retry=retry_if_exception_type((RateLimitError, APIError))
+    )
     def _call_claude_safe(self, prompt: str) -> str:
         """
-        Appelle Claude en gérant la limite de tokens
+        Appelle Claude en gérant la limite de tokens et les rate limits avec backoff
         
         Args:
             prompt: Prompt à envoyer
@@ -435,6 +442,9 @@ TRANSCRIPTION (pour vérification - segments avec texte uniquement) :
             
             return response.content[0].text
             
+        except RateLimitError:
+            logger.warning("Rate limit atteint (429), tentative de retry automatique...")
+            raise  # Laisser tenacity gérer le retry
         except Exception as e:
             logger.error(f"Erreur lors de l'appel à Claude: {str(e)}", exc_info=True)
             raise
