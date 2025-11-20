@@ -24,6 +24,7 @@ Pillow>=10.0.0
 
 # Utilitaires
 requests>=2.31.0
+tenacity>=9.0.0
 
 # Serveur
 gunicorn>=21.2.0
