@@ -84,6 +84,18 @@ except Exception as e:
 
 logger = logging.getLogger(__name__)
 
+
+# Handler pour les fichiers trop volumineux
+@app.errorhandler(RequestEntityTooLarge)
+def handle_file_too_large(error):
+    """Gère l'erreur quand un fichier dépasse la taille maximale autorisée"""
+    max_mb = MAX_FILE_SIZE / (1024 * 1024)
+    logger.warning(f"Tentative d'upload d'un fichier trop volumineux (limite: {max_mb:.0f} MB)")
+    return jsonify({
+        'error': f'Fichier trop volumineux. La taille maximale autorisée est de {max_mb:.0f} MB'
+    }), 413
+
+
 # Import des modules
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
@@ -100,6 +112,101 @@ def allowed_file(filename):
     """Vérifie si le fichier a une extension autorisée"""
     return '.' in filename and \
            filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
+
+
+def get_file_size(file_storage) -> int:
+    """
+    Obtient la taille réelle d'un fichier uploadé sans le charger entièrement en mémoire
+    
+    Args:
+        file_storage: Objet FileStorage de Werkzeug
+        
+    Returns:
+        int: Taille du fichier en octets
+    """
+    # Sauvegarder la position actuelle
+    current_position = file_storage.tell()
+    # Aller à la fin du fichier
+    file_storage.seek(0, os.SEEK_END)
+    size = file_storage.tell()
+    # Revenir à la position initiale
+    file_storage.seek(current_position)
+    return size
+
+
+def validate_audio_file(file_storage, filename: str, max_size: int = MAX_FILE_SIZE) -> tuple:
+    """
+    Valide un fichier audio uploadé
+    
+    Args:
+        file_storage: Objet FileStorage de Werkzeug
+        filename: Nom du fichier
+        max_size: Taille maximale autorisée en octets
+        
+    Returns:
+        tuple: (is_valid: bool, error_message: str or None)
+    """
+    # 1. Vérifier que le fichier n'est pas vide
+    if not file_storage or not filename:
+        return False, "Aucun fichier fourni"
+    
+    if filename == '':
+        return False, "Nom de fichier vide"
+    
+    # 2. Vérifier l'extension
+    if not allowed_file(filename):
+        allowed_ext_str = ', '.join(sorted(ALLOWED_EXTENSIONS))
+        return False, f"Extension non autorisée. Extensions acceptées: {allowed_ext_str}"
+    
+    # 3. Vérifier la taille du fichier AVANT sauvegarde
+    file_size = get_file_size(file_storage)
+    if file_size == 0:
+        return False, "Le fichier est vide"
+    
+    if file_size > max_size:
+        max_mb = max_size / (1024 * 1024)
+        file_mb = file_size / (1024 * 1024)
+        return False, f"Fichier trop volumineux ({file_mb:.1f} MB). Maximum autorisé: {max_mb:.0f} MB"
+    
+    # 4. Vérifier les premiers octets (magic bytes) pour valider le type réel
+    # Signatures des formats audio courants
+    magic_signatures = {
+        b'RIFF': 'wav',           # WAV
+        b'ID3': 'mp3',            # MP3 avec tag ID3
+        b'\xff\xfb': 'mp3',       # MP3 sans tag ID3
+        b'\xff\xfa': 'mp3',       # MP3 sans tag ID3
+        b'\xff\xf3': 'mp3',       # MP3 sans tag ID3
+        b'\xff\xf2': 'mp3',       # MP3 sans tag ID3
+        b'fLaC': 'flac',          # FLAC
+        b'OggS': 'ogg',           # OGG/Vorbis
+        b'\x1aE\xdf\xa3': 'webm', # WebM
+        b'\x00\x00\x00': 'm4a',   # M4A (partiel, ftyp box)
+    }
+    
+    # Lire les premiers octets
+    file_storage.seek(0)
+    header = file_storage.read(12)
+    file_storage.seek(0)
+    
+    if len(header) < 4:
+        return False, "Fichier trop petit pour être un fichier audio valide"
+    
+    # Vérifier si le header correspond à un format audio connu
+    is_valid_audio = False
+    
+    # Vérification spéciale pour M4A/MP4 (ftyp box)
+    if len(header) >= 8 and header[4:8] == b'ftyp':
+        is_valid_audio = True
+    else:
+        for signature in magic_signatures.keys():
+            if header.startswith(signature):
+                is_valid_audio = True
+                break
+    
+    if not is_valid_audio:
+        return False, "Le contenu du fichier ne correspond pas à un format audio reconnu"
+    
+    return True, None
 
 
 @app.route('/')
@@ -226,16 +333,21 @@ def upload_files():
         president_seance = request.form.get('president_seance', '')
         date_seance = request.form.get('date_seance', '')
         
-        if not audio_file or audio_file.filename == '':
-            return jsonify({'error': 'Aucun fichier audio fourni'}), 400
+        # Validation complète du fichier audio AVANT sauvegarde
+        is_valid, error_message = validate_audio_file(audio_file, audio_file.filename if audio_file else '')
+        if not is_valid:
+            # Supprimer le dossier de session si la validation échoue
+            import shutil
+            if session_folder.exists():
+                shutil.rmtree(session_folder)
+            return jsonify({'error': error_message}), 400
         
-        if not allowed_file(audio_file.filename):
-            return jsonify({'error': 'Format de fichier audio non autorisé'}), 400
-        
-        # Sauvegarde du fichier audio
+        # Sauvegarde du fichier audio (validation déjà effectuée)
         audio_filename = secure_filename(audio_file.filename)
         audio_path = session_folder / audio_filename
         audio_file.save(audio_path)
+        
+        logger.info(f"[{session_id}] Fichier audio validé et sauvegardé: {audio_filename} ({get_file_size(audio_file) / (1024*1024):.1f} MB)")
         
         # Sauvegarde des documents contextuels
         context_files = {}
