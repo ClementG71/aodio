@@ -10,6 +10,7 @@ import subprocess
 import re
 import uuid
 from pathlib import Path
+from contextlib import contextmanager
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
 from mistralai.models import SDKError
@@ -46,6 +47,31 @@ class MistralVoxtralClient:
         self.use_voxtral_small_chat = True  # Activer Voxtral-Small chat comme méthode principale
         self.max_duration_for_voxtral_small_chat = 900  # 15 minutes (marge sécurité pour limite 20 min)
         self.voxtral_small_segment_duration = 600  # 10 minutes par segment pour rester sous 20 MB
+    
+    @contextmanager
+    def _temporary_audio_segments(self, segments: List[Dict[str, Any]]):
+        """
+        Context manager pour gérer les segments audio temporaires
+        Garantit la suppression des fichiers même en cas d'erreur
+        
+        Args:
+            segments: Liste des segments avec 'path' pour chaque segment
+            
+        Yields:
+            list: Liste des segments (inchangée)
+        """
+        try:
+            yield segments
+        finally:
+            # Nettoyer les segments temporaires dans tous les cas
+            for seg_info in segments:
+                try:
+                    seg_path = seg_info.get('path')
+                    if seg_path and os.path.exists(seg_path):
+                        os.remove(seg_path)
+                        logger.debug(f"Segment temporaire supprimé: {seg_path}")
+                except Exception as e:
+                    logger.warning(f"Impossible de supprimer le segment {seg_info.get('path', 'unknown')}: {e}")
     
     def _get_audio_duration(self, audio_path: str) -> float:
         """
@@ -752,7 +778,8 @@ VALIDATION OBLIGATOIRE :
         all_transcriptions = []
         full_text_parts = []
         
-        try:
+        # Utiliser le contextmanager pour garantir la suppression des fichiers temporaires
+        with self._temporary_audio_segments(audio_segments):
             for i, seg_info in enumerate(audio_segments):
                 seg_start = seg_info['start_time']
                 seg_end = seg_info['end_time']
@@ -840,16 +867,7 @@ VALIDATION OBLIGATOIRE :
                 "segments": all_transcriptions,
                 "full_text": " ".join(full_text_parts)
             }
-            
-        finally:
-            # Nettoyer les segments temporaires
-            for seg_info in audio_segments:
-                try:
-                    if os.path.exists(seg_info['path']):
-                        os.remove(seg_info['path'])
-                        logger.debug(f"Segment temporaire supprimé: {seg_info['path']}")
-                except Exception as e:
-                    logger.warning(f"Impossible de supprimer le segment {seg_info['path']}: {e}")
+            # Les fichiers temporaires seront automatiquement supprimés par le contextmanager
     
     def _transcribe_audio_classic(self, audio_path: str,
                                   diarization_segments: List[Dict[str, Any]],
@@ -987,11 +1005,12 @@ VALIDATION OBLIGATOIRE :
         """
         all_mistral_segments = []
         full_text_parts = []
-        audio_segments = []  # Initialiser pour le finally
         
-        try:
-            # Découper l'audio
-            audio_segments = self._split_audio_into_segments(audio_path, output_dir)
+        # Découper l'audio
+        audio_segments = self._split_audio_into_segments(audio_path, output_dir)
+        
+        # Utiliser le contextmanager pour garantir la suppression des fichiers temporaires
+        with self._temporary_audio_segments(audio_segments):
             
             # Transcrir chaque segment
             for i, seg_info in enumerate(audio_segments):
@@ -1056,16 +1075,7 @@ VALIDATION OBLIGATOIRE :
             
             logger.info(f"Transcription terminée: {len(transcriptions)} segments (depuis {len(audio_segments)} segments audio)")
             return result
-            
-        finally:
-            # Nettoyer les segments temporaires
-            for seg_info in audio_segments:
-                try:
-                    if os.path.exists(seg_info['path']):
-                        os.remove(seg_info['path'])
-                        logger.debug(f"Segment temporaire supprimé: {seg_info['path']}")
-                except Exception as e:
-                    logger.warning(f"Impossible de supprimer le segment {seg_info['path']}: {e}")
+            # Les fichiers temporaires seront automatiquement supprimés par le contextmanager
     
     def _map_transcription_to_diarization(self, mistral_segments: List[Dict[str, Any]],
                                          diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:

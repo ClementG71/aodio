@@ -3,6 +3,8 @@ Service de gestion des logs et de l'historique des traitements
 """
 import json
 import logging
+import fcntl
+import os
 from pathlib import Path
 from datetime import datetime
 from typing import List, Dict, Any
@@ -27,7 +29,7 @@ class LogManager:
     
     def log_status(self, session_id: str, stage: str, message: str, data: Any = None):
         """
-        Enregistre un statut de traitement
+        Enregistre un statut de traitement avec verrou de fichier pour éviter les race conditions
         
         Args:
             session_id: ID de la session
@@ -36,41 +38,75 @@ class LogManager:
             data: Données supplémentaires optionnelles
         """
         try:
-            # Lecture de l'historique
-            with open(self.history_file, 'r', encoding='utf-8') as f:
-                history = json.load(f)
-            
-            # Recherche de l'entrée existante
-            entry = None
-            for item in history:
-                if item.get('session_id') == session_id:
-                    entry = item
-                    break
-            
-            # Création d'une nouvelle entrée si nécessaire
-            if not entry:
-                entry = {
-                    'session_id': session_id,
-                    'created_at': datetime.now().isoformat(),
-                    'status': 'processing',
-                    'stages': []
-                }
-                history.append(entry)
-            
-            # Ajout du nouveau statut
-            status_entry = {
-                'stage': stage,
-                'message': message,
-                'timestamp': datetime.now().isoformat(),
-                'data': data if data else None
-            }
-            entry['stages'].append(status_entry)
-            entry['status'] = stage
-            entry['updated_at'] = datetime.now().isoformat()
-            
-            # Sauvegarde
-            with open(self.history_file, 'w', encoding='utf-8') as f:
-                json.dump(history, f, ensure_ascii=False, indent=2)
+            # Utiliser un verrou de fichier pour rendre l'opération atomique
+            # Cela évite les race conditions en cas de requêtes concurrentes
+            with open(self.history_file, 'r+', encoding='utf-8') as f:
+                # Verrou exclusif : bloque les autres processus jusqu'à la fin
+                try:
+                    fcntl.flock(f.fileno(), fcntl.LOCK_EX)
+                except (OSError, AttributeError):
+                    # Fallback pour Windows ou systèmes sans fcntl
+                    # Sur Windows, on utilise un verrou de fichier basique
+                    if os.name == 'nt':
+                        import msvcrt
+                        msvcrt.locking(f.fileno(), msvcrt.LK_LOCK, 1)
+                    else:
+                        # Si fcntl n'est pas disponible, on continue sans verrou
+                        # (moins sûr mais mieux que rien)
+                        logger.warning("fcntl non disponible, opération sans verrou (risque de race condition)")
+                
+                try:
+                    # Lecture de l'historique
+                    f.seek(0)
+                    content = f.read()
+                    if content.strip():
+                        history = json.loads(content)
+                    else:
+                        history = []
+                    
+                    # Recherche de l'entrée existante
+                    entry = None
+                    for item in history:
+                        if item.get('session_id') == session_id:
+                            entry = item
+                            break
+                    
+                    # Création d'une nouvelle entrée si nécessaire
+                    if not entry:
+                        entry = {
+                            'session_id': session_id,
+                            'created_at': datetime.now().isoformat(),
+                            'status': 'processing',
+                            'stages': []
+                        }
+                        history.append(entry)
+                    
+                    # Ajout du nouveau statut
+                    status_entry = {
+                        'stage': stage,
+                        'message': message,
+                        'timestamp': datetime.now().isoformat(),
+                        'data': data if data else None
+                    }
+                    entry['stages'].append(status_entry)
+                    entry['status'] = stage
+                    entry['updated_at'] = datetime.now().isoformat()
+                    
+                    # Sauvegarde atomique
+                    f.seek(0)
+                    f.truncate()
+                    json.dump(history, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())  # Forcer l'écriture sur disque
+                    
+                finally:
+                    # Libérer le verrou
+                    try:
+                        fcntl.flock(f.fileno(), fcntl.LOCK_UN)
+                    except (OSError, AttributeError):
+                        if os.name == 'nt':
+                            import msvcrt
+                            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
             
             logger.info(f"[{session_id}] {stage}: {message}")
             
