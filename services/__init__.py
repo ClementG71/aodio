@@ -19,7 +19,7 @@ from services.llm_processor import LLMProcessor
 from services.log_manager import LogManager
 
 # RunPod
-from services.runpod_worker import RunPodClient
+from services.runpod_worker import RunPodWorker
 
 __all__ = [
     'AudioProcessor',
@@ -30,5 +30,5 @@ __all__ = [
     'DocumentGenerator',
     'LLMProcessor',
     'LogManager',
-    'RunPodClient',
+    'RunPodWorker',
 ]
