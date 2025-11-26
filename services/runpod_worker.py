@@ -38,6 +38,32 @@ class RunPodWorker:
             "Content-Type": "application/json"
         }
     
+    def _sanitize_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Masque les données sensibles dans un payload pour les logs
+        
+        Args:
+            payload: Payload à nettoyer
+            
+        Returns:
+            dict: Payload avec données sensibles masquées
+        """
+        sensitive_keys = ['key', 'token', 'api_key', 'secret', 'password', 'authorization']
+        
+        def sanitize_value(obj):
+            if isinstance(obj, dict):
+                return {k: '***' if any(sk in k.lower() for sk in sensitive_keys) else sanitize_value(v)
+                        for k, v in obj.items()}
+            elif isinstance(obj, list):
+                return [sanitize_value(item) for item in obj]
+            elif isinstance(obj, str) and any(sk in obj.lower() for sk in ['bearer', 'token', 'key']):
+                # Masquer les valeurs qui ressemblent à des tokens
+                if len(obj) > 20 and any(c.isalnum() for c in obj):
+                    return '***'
+            return obj
+        
+        return sanitize_value(payload)
+    
     def _upload_file(self, file_path: str) -> str:
         """
         Génère une URL accessible publiquement pour le fichier audio
@@ -104,7 +130,9 @@ class RunPodWorker:
             api_url = f"{self.base_url}/run"
             logger.info(f"Appel API RunPod: {api_url}")
             logger.info(f"Endpoint ID utilisé: {self.endpoint_id}")
-            logger.debug(f"Payload: {json.dumps(payload, indent=2)}")
+            # Masquer les données sensibles dans les logs
+            safe_payload = self._sanitize_payload(payload)
+            logger.debug(f"Payload: {json.dumps(safe_payload, indent=2)}")
             
             # Vérifier que l'API key est présente
             if not self.api_key:

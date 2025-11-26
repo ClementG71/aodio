@@ -108,7 +108,19 @@ Cliquez sur **"New Variable"** et ajoutez les variables suivantes **une par une*
 - **Valeur** : La clé API Mistral AI copiée à l'étape 3
 - Cliquez sur **"Add"**
 
-#### Variable 6 : RAILWAY_PUBLIC_DOMAIN (optionnel)
+#### Variable 6 : FLASK_DEBUG (recommandé)
+
+- **Nom** : `FLASK_DEBUG`
+- **Valeur** : `False` (pour la production)
+- **Note** : Contrôle le mode debug de Flask. En production, toujours mettre `False` pour la sécurité. Si non configuré, le mode debug est désactivé par défaut.
+
+#### Variable 7 : ALLOWED_ORIGINS (recommandé pour la sécurité)
+
+- **Nom** : `ALLOWED_ORIGINS`
+- **Valeur** : Liste des domaines autorisés pour CORS, séparés par des virgules (ex: `https://votre-app.railway.app,https://www.votre-domaine.com`)
+- **Note** : Si vide ou non configuré, tous les domaines sont autorisés (avec avertissement dans les logs). Recommandé en production de limiter aux domaines nécessaires. Pour RunPod, vous pouvez ajouter les domaines RunPod si nécessaire.
+
+#### Variable 8 : RAILWAY_PUBLIC_DOMAIN (optionnel)
 
 - **Nom** : `RAILWAY_PUBLIC_DOMAIN`
 - **Valeur** : Railway définit automatiquement cette variable, mais vous pouvez la vérifier
@@ -126,6 +138,8 @@ Dans Railway, dans l'onglet "Variables", vous devriez voir :
 ✅ RUNPOD_API_KEY
 ✅ RUNPOD_ENDPOINT_ID
 ✅ MISTRAL_API_KEY
+✅ FLASK_DEBUG=False          (recommandé)
+✅ ALLOWED_ORIGINS=...        (recommandé)
 ```
 
 ### 6.2 Tester l'application
@@ -195,6 +209,8 @@ Pour vérifier que RunPod fonctionne, vous pouvez utiliser le script de test dan
 | `RUNPOD_API_KEY` | runpod.io/console/user/settings | `...` |
 | `RUNPOD_ENDPOINT_ID` | runpod.io/console/serverless | `abc123def456` |
 | `MISTRAL_API_KEY` | console.mistral.ai | `...` |
+| `FLASK_DEBUG` | Configuration locale | `False` (production) |
+| `ALLOWED_ORIGINS` | Configuration locale | `https://app.railway.app,https://www.domaine.com` |
 
 ## 🎯 Prochaines étapes
 

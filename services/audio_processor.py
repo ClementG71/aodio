@@ -46,7 +46,7 @@ class AudioProcessor:
             logger.info(f"Traitement audio: {input_path} -> {output_path}")
             
             # Étape 1: Analyse du fichier d'entrée
-            audio_info = self._get_audio_info(input_path)
+            audio_info = self.get_audio_info(input_path)
             if audio_info:
                 logger.info(f"Audio d'entrée: {audio_info['sample_rate']}Hz, "
                           f"{audio_info['channels']} canaux, "
@@ -92,11 +92,19 @@ class AudioProcessor:
             ]
             
             logger.info(f"Traitement audio amélioré avec ffmpeg...")
+            # Timeout dynamique basé sur la durée du fichier (au moins 2x la durée, minimum 3600s)
+            audio_info = self.get_audio_info(input_path)
+            if audio_info and audio_info.get('duration_seconds', 0) > 0:
+                duration = audio_info['duration_seconds']
+                timeout = max(3600, int(duration * 2))  # Au moins 2x la durée, minimum 1h
+                logger.info(f"Timeout dynamique calculé: {timeout}s (durée audio: {duration:.1f}s)")
+            else:
+                timeout = 3600  # Fallback sur timeout par défaut
             result = subprocess.run(
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=3600
+                timeout=timeout
             )
             
             if result.returncode != 0:
@@ -159,11 +167,19 @@ class AudioProcessor:
         ]
         
         logger.info(f"Exécution de ffmpeg (basique): {' '.join(cmd)}")
+        # Timeout dynamique basé sur la durée du fichier (au moins 2x la durée, minimum 3600s)
+        audio_info = self.get_audio_info(input_path)
+        if audio_info and audio_info.get('duration_seconds', 0) > 0:
+            duration = audio_info['duration_seconds']
+            timeout = max(3600, int(duration * 2))  # Au moins 2x la durée, minimum 1h
+            logger.info(f"Timeout dynamique calculé: {timeout}s (durée audio: {duration:.1f}s)")
+        else:
+            timeout = 3600  # Fallback sur timeout par défaut
         result = subprocess.run(
             cmd,
             capture_output=True,
             text=True,
-            timeout=3600
+            timeout=timeout
         )
         
         if result.returncode != 0:
@@ -178,7 +194,7 @@ class AudioProcessor:
         Vérifie la qualité de l'audio traité
         """
         try:
-            audio_info = self._get_audio_info(output_path)
+            audio_info = self.get_audio_info(output_path)
             if audio_info:
                 # Vérifier que le sample rate est correct
                 if audio_info['sample_rate'] != self.target_sample_rate:

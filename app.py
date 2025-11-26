@@ -129,7 +129,17 @@ def serve_file(session_id, filename):
     # Gérer les requêtes OPTIONS pour CORS
     if request.method == 'OPTIONS':
         response = jsonify({'status': 'ok'})
-        response.headers['Access-Control-Allow-Origin'] = '*'
+        # CORS restreint aux domaines autorisés
+        allowed_origins = os.getenv('ALLOWED_ORIGINS', '').split(',')
+        origin = request.headers.get('Origin')
+        if origin and origin.strip() in [o.strip() for o in allowed_origins if o.strip()]:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            # Si aucun domaine autorisé configuré, autoriser tous (pour compatibilité RunPod)
+            # Mais loguer un avertissement
+            if not allowed_origins or not any(o.strip() for o in allowed_origins):
+                logger.warning("ALLOWED_ORIGINS non configuré, CORS ouvert à tous (non recommandé en production)")
+            response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         return response
@@ -173,7 +183,17 @@ def serve_file(session_id, filename):
         )
         
         # Ajouter des headers CORS si nécessaire (pour RunPod)
-        response.headers['Access-Control-Allow-Origin'] = '*'
+        # CORS restreint aux domaines autorisés
+        allowed_origins = os.getenv('ALLOWED_ORIGINS', '').split(',')
+        origin = request.headers.get('Origin')
+        if origin and origin.strip() in [o.strip() for o in allowed_origins if o.strip()]:
+            response.headers['Access-Control-Allow-Origin'] = origin
+        else:
+            # Si aucun domaine autorisé configuré, autoriser tous (pour compatibilité RunPod)
+            # Mais loguer un avertissement
+            if not allowed_origins or not any(o.strip() for o in allowed_origins):
+                logger.warning("ALLOWED_ORIGINS non configuré, CORS ouvert à tous (non recommandé en production)")
+            response.headers['Access-Control-Allow-Origin'] = '*'
         response.headers['Access-Control-Allow-Methods'] = 'GET, HEAD, OPTIONS'
         response.headers['Access-Control-Allow-Headers'] = 'Content-Type'
         
@@ -472,5 +492,7 @@ def confidentialite():
 
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    # Mode debug contrôlé par variable d'environnement (désactivé par défaut en production)
+    debug_mode = os.getenv('FLASK_DEBUG', 'False').lower() == 'true'
+    app.run(debug=debug_mode, host='0.0.0.0', port=5000)
 
