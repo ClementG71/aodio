@@ -11,6 +11,7 @@ import os
 import json
 import logging
 import time
+import base64
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
@@ -131,17 +132,31 @@ class MistralVoxtralClient:
         
         return f"{app_base_url}/files/{Path(audio_path).name}"
     
+    def _encode_audio_base64(self, audio_path: str) -> str:
+        """
+        Encode un fichier audio en base64 pour l'API Mistral chat multimodal
+        
+        Args:
+            audio_path: Chemin local du fichier audio
+            
+        Returns:
+            str: Audio encodé en base64
+        """
+        with open(audio_path, "rb") as f:
+            content = f.read()
+        return base64.b64encode(content).decode('utf-8')
+    
     def _transcribe_with_voxtral_small_chat(self, audio_path: str,
                                            audio_url: Optional[str],
                                            diarization_segments: List[Dict[str, Any]],
                                            language: str = "fr") -> Dict[str, Any]:
         """
         Transcription avec Voxtral-Small en mode chat
-        Fournit l'audio + segments de diarisation comme contexte
+        Fournit l'audio encodé en base64 + segments de diarisation comme contexte
         
         Args:
             audio_path: Chemin local du fichier audio
-            audio_url: URL publique du fichier audio
+            audio_url: (non utilisé, conservé pour compatibilité)
             diarization_segments: Segments de diarisation
             language: Langue de l'audio
             
@@ -152,9 +167,11 @@ class MistralVoxtralClient:
             diarization_context = self._format_diarization_for_prompt(diarization_segments)
             prompt = self._build_transcription_prompt(diarization_context)
             
-            audio_url_to_use = audio_url or self._get_audio_url(audio_path)
+            # Encoder l'audio en base64 (requis par l'API Mistral)
+            logger.info(f"Encodage audio en base64: {audio_path}")
+            audio_base64 = self._encode_audio_base64(audio_path)
+            logger.info(f"Audio encodé ({len(audio_base64)} caractères base64)")
             
-            logger.info(f"Transcription avec audio (URL Flask): {audio_url_to_use}")
             with mistral_breaker:
                 response = self.client.chat.complete(
                     model="voxtral-small-latest",
@@ -163,17 +180,17 @@ class MistralVoxtralClient:
                         "content": [
                             {
                                 "type": "input_audio",
-                            "input_audio": audio_url_to_use,
-                        },
-                        {
-                            "type": "text",
-                            "text": prompt
-                        }
-                    ]
-                }],
-                temperature=0.0,
-                response_format={"type": "json_object"}
-            )
+                                "input_audio": audio_base64,
+                            },
+                            {
+                                "type": "text",
+                                "text": prompt
+                            }
+                        ]
+                    }],
+                    temperature=0.0,
+                    response_format={"type": "json_object"}
+                )
             
             result_content = response.choices[0].message.content
             result = json.loads(result_content)
