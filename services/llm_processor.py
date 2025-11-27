@@ -8,6 +8,8 @@ from typing import Dict, List, Any, Optional
 from anthropic import Anthropic, RateLimitError, APIError
 from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
+from services.circuit_breaker import anthropic_breaker, CircuitBreakerOpen
+
 logger = logging.getLogger(__name__)
 
 
@@ -430,15 +432,16 @@ TRANSCRIPTION (pour vérification - segments avec texte uniquement) :
                 if len(prompt) > max_chars:
                     prompt = prompt[:max_chars//2] + "\n\n[... contenu tronqué ...]\n\n" + prompt[-max_chars//2:]
             
-            response = self.client.messages.create(
-                model=self.model,
-                max_tokens=self.max_tokens,
-                temperature=0.3,  # Pour le pré-CR, légère créativité
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }]
-            )
+            with anthropic_breaker:
+                response = self.client.messages.create(
+                    model=self.model,
+                    max_tokens=self.max_tokens,
+                    temperature=0.3,  # Pour le pré-CR, légère créativité
+                    messages=[{
+                        "role": "user",
+                        "content": prompt
+                    }]
+                )
             
             return response.content[0].text
             

@@ -20,6 +20,7 @@ from mistralai.models import SDKError
 from services.audio_segmenter import AudioSegmenter
 from services.transcription_mapper import TranscriptionMapper
 from services.transcription_aligner import TranscriptionAligner
+from services.circuit_breaker import mistral_breaker, CircuitBreakerOpen
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +55,23 @@ class MistralVoxtralClient:
         self.segmenter = AudioSegmenter(max_segment_duration=self.max_segment_duration)
         self.mapper = TranscriptionMapper()
         self.aligner = TranscriptionAligner()
+    
+    def _call_api(self, api_func, *args, **kwargs):
+        """
+        Wrapper pour les appels API avec circuit breaker
+        
+        Args:
+            api_func: Fonction API à appeler
+            *args, **kwargs: Arguments de la fonction
+            
+        Returns:
+            Résultat de l'appel API
+            
+        Raises:
+            CircuitBreakerOpen: Si l'API est indisponible
+        """
+        with mistral_breaker:
+            return api_func(*args, **kwargs)
     
     def transcribe_audio(self, audio_path: str, 
                         diarization_segments: List[Dict[str, Any]],
@@ -137,13 +155,14 @@ class MistralVoxtralClient:
             audio_url_to_use = audio_url or self._get_audio_url(audio_path)
             
             logger.info(f"Transcription avec audio (URL Flask): {audio_url_to_use}")
-            response = self.client.chat.complete(
-                model="voxtral-small-latest",
-                messages=[{
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "input_audio",
+            with mistral_breaker:
+                response = self.client.chat.complete(
+                    model="voxtral-small-latest",
+                    messages=[{
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "input_audio",
                             "input_audio": audio_url_to_use,
                         },
                         {
@@ -410,16 +429,17 @@ VALIDATION OBLIGATOIRE :
         for attempt in range(max_retries):
             try:
                 with open(segment_path, "rb") as f:
-                    transcription_response = self.client.audio.transcriptions.complete(
-                        model=self.model,
-                        file={
-                            "content": f,
-                            "file_name": os.path.basename(segment_path)
-                        },
-                        language=language,
-                        temperature=0.0,
-                        timestamp_granularities=["segment"]
-                    )
+                    with mistral_breaker:
+                        transcription_response = self.client.audio.transcriptions.complete(
+                            model=self.model,
+                            file={
+                                "content": f,
+                                "file_name": os.path.basename(segment_path)
+                            },
+                            language=language,
+                            temperature=0.0,
+                            timestamp_granularities=["segment"]
+                        )
                 
                 full_text = ""
                 if hasattr(transcription_response, 'text'):
@@ -496,16 +516,17 @@ VALIDATION OBLIGATOIRE :
                 logger.info(f"Transcription directe avec {self.model} (tentative {attempt + 1}/{max_retries}): {audio_path}")
                 
                 with open(audio_path, "rb") as f:
-                    transcription_response = self.client.audio.transcriptions.complete(
-                        model=self.model,
-                        file={
-                            "content": f,
-                            "file_name": os.path.basename(audio_path)
-                        },
-                        language=language,
-                        temperature=0.0,
-                        timestamp_granularities=["segment"]
-                    )
+                    with mistral_breaker:
+                        transcription_response = self.client.audio.transcriptions.complete(
+                            model=self.model,
+                            file={
+                                "content": f,
+                                "file_name": os.path.basename(audio_path)
+                            },
+                            language=language,
+                            temperature=0.0,
+                            timestamp_granularities=["segment"]
+                        )
                 
                 segments = []
                 if hasattr(transcription_response, 'segments'):
@@ -697,13 +718,14 @@ VALIDATION OBLIGATOIRE :
             try:
                 logger.info(f"Transcription depuis URL avec {self.model} (tentative {attempt + 1}/{max_retries}): {audio_url}")
                 
-                transcription_response = self.client.audio.transcriptions.complete(
-                    model=self.model,
-                    file_url=audio_url,
-                    language=language,
-                    temperature=0.0,
-                    timestamp_granularities=["segment"]
-                )
+                with mistral_breaker:
+                    transcription_response = self.client.audio.transcriptions.complete(
+                        model=self.model,
+                        file_url=audio_url,
+                        language=language,
+                        temperature=0.0,
+                        timestamp_granularities=["segment"]
+                    )
                 
                 mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
                 

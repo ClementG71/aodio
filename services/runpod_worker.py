@@ -9,6 +9,8 @@ import time
 import os
 from typing import Dict, List, Any
 
+from services.circuit_breaker import runpod_breaker, CircuitBreakerOpen
+
 logger = logging.getLogger(__name__)
 
 
@@ -138,12 +140,13 @@ class RunPodWorker:
             if not self.api_key:
                 raise ValueError("RUNPOD_API_KEY n'est pas configurée")
             
-            response = requests.post(
-                api_url,
-                headers=self.headers,
-                json=payload,
-                timeout=300
-            )
+            with runpod_breaker:
+                response = requests.post(
+                    api_url,
+                    headers=self.headers,
+                    json=payload,
+                    timeout=300
+                )
             
             # Log de la réponse pour debug
             logger.info(f"Status code: {response.status_code}")
@@ -300,12 +303,13 @@ class RunPodWorker:
                 }
             }
             
-            response = requests.post(
-                f"{self.base_url}/run",
-                headers=self.headers,
-                json=payload,
-                timeout=600
-            )
+            with runpod_breaker:
+                response = requests.post(
+                    f"{self.base_url}/run",
+                    headers=self.headers,
+                    json=payload,
+                    timeout=600
+                )
             response.raise_for_status()
             
             job_id = response.json().get('id')
@@ -377,11 +381,12 @@ class RunPodWorker:
                 logger.info(f"Vérification du statut du job {job_id} (tentative {check_count}, {elapsed_time}s écoulées)...")
             
             try:
-                response = requests.get(
-                    status_url,
-                    headers=self.headers,
-                    timeout=30
-                )
+                with runpod_breaker:
+                    response = requests.get(
+                        status_url,
+                        headers=self.headers,
+                        timeout=30
+                    )
                 
                 if response.status_code == 404:
                     consecutive_404 += 1
