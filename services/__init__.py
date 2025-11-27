@@ -1,25 +1,12 @@
 # Services package
-
-# Audio processing
-from services.audio_processor import AudioProcessor
-from services.audio_segmenter import AudioSegmenter
-
-# Transcription
-from services.mistral_voxtral import MistralVoxtralClient
-from services.transcription_mapper import TranscriptionMapper
-from services.transcription_aligner import TranscriptionAligner
-
-# Document generation
-from services.document_generator import DocumentGenerator
-
-# LLM processing
-from services.llm_processor import LLMProcessor
-
-# Logging
-from services.log_manager import LogManager
-
-# RunPod
-from services.runpod_worker import RunPodWorker
+# 
+# Les imports sont faits à la demande pour éviter les dépendances circulaires
+# et permettre aux tests de fonctionner sans toutes les dépendances.
+#
+# Usage:
+#   from services.audio_processor import AudioProcessor
+#   from services.transcription_mapper import TranscriptionMapper
+#   etc.
 
 __all__ = [
     'AudioProcessor',
