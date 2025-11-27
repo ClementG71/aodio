@@ -4,7 +4,7 @@ Werkzeug==3.0.1
 python-dotenv==1.0.0
 
 # APIs LLM
-anthropic==0.18.1
+anthropic>=0.70.0
 mistralai>=1.9.0
 
 # Traitement audio (basique pour normalisation)
