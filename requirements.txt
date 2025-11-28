@@ -4,8 +4,14 @@ Werkzeug==3.0.1
 python-dotenv==1.0.0
 
 # APIs LLM
-anthropic>=0.70.0
 mistralai>=1.9.0
+
+# NLP & Mapping
+spacy>=3.7.0
+fuzzywuzzy>=0.18.0
+python-Levenshtein>=0.23.0
+# Modèle Spacy pour le français (Large)
+https://github.com/explosion/spacy-models/releases/download/fr_core_news_lg-3.7.0/fr_core_news_lg-3.7.0-py3-none-any.whl
 
 # Traitement audio (basique pour normalisation)
 pydub==0.25.1

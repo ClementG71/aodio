@@ -196,12 +196,75 @@ class RunPodWorker:
             #     ]
             # }
             
-            logger.info(f"Diarisation terminée: {len(result.get('segments', []))} segments")
+            # Le résultat contient directement la liste des segments ou un dict avec 'segments'
+            segments = result if isinstance(result, list) else result.get('segments', [])
+            
+            # Post-traitement des segments (fusion/nettoyage)
+            cleaned_segments = self._post_process_diarization(segments)
+            
+            # Si le résultat original était un dict, on met à jour la liste des segments
+            if isinstance(result, dict):
+                result['segments'] = cleaned_segments
+            else:
+                result = {"segments": cleaned_segments}
+            
+            logger.info(f"Diarisation terminée: {len(cleaned_segments)} segments (après nettoyage)")
             return result
             
         except Exception as e:
             logger.error(f"Erreur lors de la diarisation: {str(e)}", exc_info=True)
             raise
+
+    def _post_process_diarization(self, segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Nettoie et fusionne les segments de diarisation
+        
+        Args:
+            segments: Liste brute des segments Pyannote
+            
+        Returns:
+            Liste nettoyée et optimisée
+        """
+        if not segments:
+            return []
+            
+        # Trier par temps de début
+        sorted_segments = sorted(segments, key=lambda x: x['start'])
+        cleaned_segments = []
+        
+        # 1. Nettoyage initial (suppression des micro-segments < 0.3s)
+        # On garde les segments courts s'ils semblent isolés (potentiel "Oui/Non")
+        # mais on supprime les "glitchs" très courts collés à d'autres
+        for seg in sorted_segments:
+            duration = seg['end'] - seg['start']
+            if duration >= 0.3:
+                cleaned_segments.append(seg)
+            else:
+                logger.debug(f"Suppression segment trop court: {duration:.3f}s ({seg['start']}-{seg['end']})")
+                
+        if not cleaned_segments:
+            return []
+            
+        # 2. Fusion des segments consécutifs du même speaker
+        merged_segments = []
+        current_seg = cleaned_segments[0].copy() # Copie pour ne pas modifier l'original
+        
+        for next_seg in cleaned_segments[1:]:
+            # Si même speaker et écart faible (< 1s)
+            gap = next_seg['start'] - current_seg['end']
+            
+            if (next_seg.get('speaker') == current_seg.get('speaker') and gap < 1.0):
+                # Fusionner : étendre la fin du segment courant
+                current_seg['end'] = next_seg['end']
+            else:
+                # Valider le segment courant et passer au suivant
+                merged_segments.append(current_seg)
+                current_seg = next_seg.copy()
+                
+        merged_segments.append(current_seg)
+        
+        logger.info(f"Post-traitement diarisation: {len(segments)} -> {len(merged_segments)} segments")
+        return merged_segments
     
     def transcribe_audio(self, audio_path: str, diarization_result: Dict[str, Any]) -> Dict[str, Any]:
         """

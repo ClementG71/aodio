@@ -12,10 +12,11 @@ __all__ = [
     'AudioProcessor',
     'AudioSegmenter',
     'MistralVoxtralClient',
+    'MistralProcessor',
     'TranscriptionMapper',
     'TranscriptionAligner',
+    'SpeakerMapper',
     'DocumentGenerator',
-    'LLMProcessor',
     'LogManager',
     'RunPodWorker',
 ]

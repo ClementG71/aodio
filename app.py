@@ -50,7 +50,6 @@ app.config['PROCESSED_FOLDER'] = PROCESSED_FOLDER
 app.config['LOGS_FOLDER'] = LOGS_FOLDER
 
 # Configuration des APIs
-app.config['ANTHROPIC_API_KEY'] = os.getenv('ANTHROPIC_API_KEY')
 app.config['RUNPOD_API_KEY'] = os.getenv('RUNPOD_API_KEY')
 app.config['RUNPOD_ENDPOINT_ID'] = os.getenv('RUNPOD_ENDPOINT_ID')
 app.config['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY')
@@ -100,7 +99,7 @@ def handle_file_too_large(error):
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
 from services.mistral_voxtral import MistralVoxtralClient
-from services.llm_processor import LLMProcessor
+from services.mistral_processor import MistralProcessor
 from services.document_generator import DocumentGenerator
 from services.log_manager import LogManager
 
@@ -468,10 +467,14 @@ def process_audio_pipeline(session_id, metadata):
         base_url=app_base_url
     )
     
-    # API Mistral AI directement pour Voxtral (transcription)
-    mistral_client = MistralVoxtralClient(api_key=app.config.get('MISTRAL_API_KEY'))
+    # API Mistral AI directement pour Voxtral (transcription) et LLM (résumé/décisions)
+    mistral_api_key = app.config.get('MISTRAL_API_KEY')
+    if not mistral_api_key:
+        raise ValueError("MISTRAL_API_KEY n'est pas configurée dans les variables d'environnement")
+        
+    mistral_client = MistralVoxtralClient(api_key=mistral_api_key)
+    mistral_processor = MistralProcessor(api_key=mistral_api_key)
     
-    llm_processor = LLMProcessor(api_key=app.config['ANTHROPIC_API_KEY'])
     document_generator = DocumentGenerator()
     
     try:
@@ -492,29 +495,28 @@ def process_audio_pipeline(session_id, metadata):
         )
         log_manager.log_status(session_id, 'transcription', 'Transcription terminée', transcription_result)
         
-        # 3. Traitement LLM
-        log_manager.log_status(session_id, 'llm_processing', 'Démarrage du traitement LLM')
+        # 3. Traitement LLM (Full Mistral)
+        log_manager.log_status(session_id, 'llm_processing', 'Démarrage du traitement LLM (Mistral)')
         
-        # Mapping des locuteurs
-        speaker_mapping = llm_processor.map_speakers(
+        # Mapping des locuteurs (Hybride Spacy + Mistral Small)
+        speaker_mapping = mistral_processor.map_speakers(
             transcription_result,
             metadata.get('context_files', {}).get('liste_participants'),
             metadata.get('president_seance')
         )
         log_manager.log_status(session_id, 'llm_processing', 'Mapping des locuteurs terminé', speaker_mapping)
         
-        # Génération du pré-compte rendu
-        pre_cr = llm_processor.generate_pre_cr(
-            transcription_result,
-            speaker_mapping,
-            metadata.get('president_seance')
+        # Génération du pré-compte rendu (Mistral Large)
+        pre_cr = mistral_processor.generate_pre_compte_rendu(
+            transcription_result.get('full_text', ''),
+            speaker_mapping
         )
         log_manager.log_status(session_id, 'llm_processing', 'Pré-compte rendu généré')
         
-        # Extraction des décisions
-        decisions = llm_processor.extract_decisions(
-            transcription_result,
-            metadata.get('context_files', {}).get('releves_votes')
+        # Extraction des décisions (Mistral Large)
+        decisions = mistral_processor.extract_decisions(
+            transcription_result.get('full_text', ''),
+            speaker_mapping
         )
         log_manager.log_status(session_id, 'llm_processing', 'Décisions extraites', decisions)
         
