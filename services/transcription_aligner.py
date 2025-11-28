@@ -122,14 +122,27 @@ class TranscriptionAligner:
         Returns:
             list: Segments alignés {start, end, speaker, text}
         """
+        logger.info(f"Début alignement strict: {len(transcriptions)} segments trans, {len(diarization_segments)} segments diar")
+        
         # 1. Nettoyage et tri
         cleaned_transcriptions = self.clean_transcription_segments(transcriptions)
-        cleaned_transcriptions.sort(key=lambda x: x.get('start', 0))
         
+        # FALLBACK CRITIQUE: Si pas de segments mais du texte, utiliser la distribution séquentielle
+        if not cleaned_transcriptions and full_text:
+            logger.warning("Pas de segments de transcription reçus, fallback sur distribution séquentielle du texte complet")
+            return self.distribute_by_chronological_order(full_text, diarization_segments)
+            
+        cleaned_transcriptions.sort(key=lambda x: x.get('start', 0))
         diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        if cleaned_transcriptions:
+            logger.info(f"Plage trans: {cleaned_transcriptions[0].get('start', 0):.1f}s - {cleaned_transcriptions[-1].get('end', 0):.1f}s")
+        if diarization_segments:
+            logger.info(f"Plage diar: {diarization_segments[0].get('start', 0):.1f}s - {diarization_segments[-1].get('end', 0):.1f}s")
         
         # 2. Calcul et application de l'offset optimal (alignement temporel global)
         offset = self.calculate_optimal_offset(cleaned_transcriptions, diarization_segments)
+        logger.info(f"Offset appliqué: {offset}s")
         
         # Appliquer l'offset aux transcriptions pour les aligner sur la diarisation
         aligned_source = []
@@ -143,6 +156,7 @@ class TranscriptionAligner:
         # On distribue les mots dans les buckets temporels (diarisation)
         
         diar_text_buckets = {i: [] for i in range(len(diarization_segments))}
+        words_distributed = 0
         
         for trans in aligned_source:
             t_start = trans.get('start', 0)
@@ -197,12 +211,19 @@ class TranscriptionAligner:
                 
                 if chunk:
                     diar_text_buckets[ov['index']].append(" ".join(chunk))
+                    words_distributed += len(chunk)
+                    
+        logger.info(f"Mots distribués: {words_distributed}")
                     
         # Construire le résultat final
+        total_mapped = 0
         final_segments = []
         for i, diar_seg in enumerate(diarization_segments):
             text_parts = diar_text_buckets[i]
             final_text = " ".join(text_parts).strip()
+            
+            if final_text:
+                total_mapped += 1
             
             final_segments.append({
                 "start": diar_seg['start'],
@@ -210,6 +231,8 @@ class TranscriptionAligner:
                 "speaker": diar_seg.get('speaker', 'UNKNOWN'),
                 "text": final_text
             })
+            
+        logger.info(f"Segments mappés avec texte: {total_mapped}/{len(final_segments)}")
 
         return final_segments
     

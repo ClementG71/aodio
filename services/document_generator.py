@@ -289,19 +289,26 @@ class DocumentGenerator:
             lines.append("Aucune décision enregistrée.")
         else:
             for i, decision in enumerate(decisions, 1):
-                lines.append(f"DÉCISION N° {decision.get('numero', i)}")
-                lines.append("")
-                if decision.get('titre'):
-                    lines.append(f"Titre: {decision['titre']}")
-                if decision.get('description'):
-                    lines.append(f"Description: {decision['description']}")
-                if decision.get('vote'):
-                    lines.append(f"Vote: {decision['vote']}")
-                if decision.get('timestamp'):
-                    lines.append(f"Timestamp: {decision['timestamp']}")
-                lines.append("")
-                lines.append("-" * 80)
-                lines.append("")
+                if isinstance(decision, str):
+                    lines.append(f"DÉCISION N° {i}")
+                    lines.append(decision)
+                    lines.append("")
+                    lines.append("-" * 80)
+                    lines.append("")
+                else:
+                    lines.append(f"DÉCISION N° {decision.get('numero', i)}")
+                    lines.append("")
+                    if decision.get('titre'):
+                        lines.append(f"Titre: {decision['titre']}")
+                    if decision.get('description'):
+                        lines.append(f"Description: {decision['description']}")
+                    if decision.get('vote'):
+                        lines.append(f"Vote: {decision['vote']}")
+                    if decision.get('timestamp'):
+                        lines.append(f"Timestamp: {decision['timestamp']}")
+                    lines.append("")
+                    lines.append("-" * 80)
+                    lines.append("")
         
         return "\n".join(lines)
     
@@ -320,24 +327,29 @@ class DocumentGenerator:
             doc.add_paragraph("Aucune décision enregistrée.")
         else:
             for i, decision in enumerate(decisions, 1):
-                heading = doc.add_heading(f"DÉCISION N° {decision.get('numero', i)}", level=1)
-                if decision.get('titre'):
-                    p = doc.add_paragraph()
-                    p.add_run("Titre: ").bold = True
-                    p.add_run(decision['titre'])
-                if decision.get('description'):
-                    p = doc.add_paragraph()
-                    p.add_run("Description: ").bold = True
-                    p.add_run(decision['description'])
-                if decision.get('vote'):
-                    p = doc.add_paragraph()
-                    p.add_run("Vote: ").bold = True
-                    p.add_run(decision['vote'])
-                if decision.get('timestamp'):
-                    p = doc.add_paragraph()
-                    p.add_run("Timestamp: ").bold = True
-                    p.add_run(decision['timestamp'])
-                doc.add_paragraph("")
+                if isinstance(decision, str):
+                    doc.add_heading(f"DÉCISION N° {i}", level=1)
+                    doc.add_paragraph(decision)
+                    doc.add_paragraph("")
+                else:
+                    heading = doc.add_heading(f"DÉCISION N° {decision.get('numero', i)}", level=1)
+                    if decision.get('titre'):
+                        p = doc.add_paragraph()
+                        p.add_run("Titre: ").bold = True
+                        p.add_run(decision['titre'])
+                    if decision.get('description'):
+                        p = doc.add_paragraph()
+                        p.add_run("Description: ").bold = True
+                        p.add_run(decision['description'])
+                    if decision.get('vote'):
+                        p = doc.add_paragraph()
+                        p.add_run("Vote: ").bold = True
+                        p.add_run(decision['vote'])
+                    if decision.get('timestamp'):
+                        p = doc.add_paragraph()
+                        p.add_run("Timestamp: ").bold = True
+                        p.add_run(decision['timestamp'])
+                    doc.add_paragraph("")
         
         doc.save(str(output_path))
         return output_path
@@ -367,31 +379,34 @@ class DocumentGenerator:
         else:
             for i, decision in enumerate(decisions, 1):
                 story.append(Paragraph(
-                    f"DÉCISION N° {decision.get('numero', i)}",
+                    f"DÉCISION N° {i if isinstance(decision, str) else decision.get('numero', i)}",
                     self.styles['Heading2']
                 ))
                 story.append(Spacer(1, 0.1*inch))
                 
-                if decision.get('titre'):
-                    story.append(Paragraph(
-                        f"<b>Titre:</b> {decision['titre']}",
-                        self.styles['Normal']
-                    ))
-                if decision.get('description'):
-                    story.append(Paragraph(
-                        f"<b>Description:</b> {decision['description']}",
-                        self.styles['Normal']
-                    ))
-                if decision.get('vote'):
-                    story.append(Paragraph(
-                        f"<b>Vote:</b> {decision['vote']}",
-                        self.styles['Normal']
-                    ))
-                if decision.get('timestamp'):
-                    story.append(Paragraph(
-                        f"<b>Timestamp:</b> {decision['timestamp']}",
-                        self.styles['Normal']
-                    ))
+                if isinstance(decision, str):
+                    story.append(Paragraph(decision, self.styles['Normal']))
+                else:
+                    if decision.get('titre'):
+                        story.append(Paragraph(
+                            f"<b>Titre:</b> {decision['titre']}",
+                            self.styles['Normal']
+                        ))
+                    if decision.get('description'):
+                        story.append(Paragraph(
+                            f"<b>Description:</b> {decision['description']}",
+                            self.styles['Normal']
+                        ))
+                    if decision.get('vote'):
+                        story.append(Paragraph(
+                            f"<b>Vote:</b> {decision['vote']}",
+                            self.styles['Normal']
+                        ))
+                    if decision.get('timestamp'):
+                        story.append(Paragraph(
+                            f"<b>Timestamp:</b> {decision['timestamp']}",
+                            self.styles['Normal']
+                        ))
                 
                 story.append(Spacer(1, 0.2*inch))
         
