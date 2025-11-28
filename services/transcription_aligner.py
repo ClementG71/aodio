@@ -4,6 +4,7 @@ Extrait de mistral_voxtral.py pour une meilleure modularité
 """
 import re
 import logging
+import spacy
 from typing import Dict, List, Any
 
 logger = logging.getLogger(__name__)
@@ -13,8 +14,17 @@ class TranscriptionAligner:
     """Aligne et distribue le texte de transcription avec les segments de diarisation"""
     
     def __init__(self):
-        """Initialise l'aligner"""
-        pass
+        """Initialise l'aligner avec Spacy"""
+        try:
+            self.nlp = spacy.load("fr_core_news_lg")
+            logger.info("Modèle Spacy chargé pour l'alignement")
+        except OSError:
+            logger.warning("Modèle 'fr_core_news_lg' non trouvé, essai avec 'fr_core_news_md' ou fallback basique")
+            try:
+                self.nlp = spacy.load("fr_core_news_md")
+            except:
+                self.nlp = None
+                logger.warning("Aucun modèle Spacy trouvé, alignement purement statistique")
     
     def calculate_optimal_offset(self, transcriptions: List[Dict[str, Any]], 
                                  diarization_segments: List[Dict[str, Any]]) -> float:
@@ -111,8 +121,9 @@ class TranscriptionAligner:
                              diarization_segments: List[Dict[str, Any]],
                              full_text: str = "") -> List[Dict[str, Any]]:
         """
-        Alignement Text-First : Fusionne la transcription brute avec la diarisation
-        en distribuant les mots selon les chevauchements temporels.
+        Alignement Text-First avec Spacy :
+        1. Analyse linguistique pour préserver l'intégrité des phrases
+        2. Distribution temporelle intelligente ("Snap-to-Grid" linguistique)
         
         Args:
             transcriptions: Segments de transcription bruts (avec timestamps)
@@ -122,12 +133,11 @@ class TranscriptionAligner:
         Returns:
             list: Segments alignés {start, end, speaker, text}
         """
-        logger.info(f"Début alignement strict: {len(transcriptions)} segments trans, {len(diarization_segments)} segments diar")
+        logger.info(f"Début alignement NLP: {len(transcriptions)} segments trans, {len(diarization_segments)} segments diar")
         
         # 1. Nettoyage et tri
         cleaned_transcriptions = self.clean_transcription_segments(transcriptions)
         
-        # FALLBACK CRITIQUE: Si pas de segments mais du texte, utiliser la distribution séquentielle
         if not cleaned_transcriptions and full_text:
             logger.warning("Pas de segments de transcription reçus, fallback sur distribution séquentielle du texte complet")
             return self.distribute_by_chronological_order(full_text, diarization_segments)
@@ -135,16 +145,11 @@ class TranscriptionAligner:
         cleaned_transcriptions.sort(key=lambda x: x.get('start', 0))
         diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
         
-        if cleaned_transcriptions:
-            logger.info(f"Plage trans: {cleaned_transcriptions[0].get('start', 0):.1f}s - {cleaned_transcriptions[-1].get('end', 0):.1f}s")
-        if diarization_segments:
-            logger.info(f"Plage diar: {diarization_segments[0].get('start', 0):.1f}s - {diarization_segments[-1].get('end', 0):.1f}s")
-        
-        # 2. Calcul et application de l'offset optimal (alignement temporel global)
+        # 2. Calcul et application de l'offset optimal
         offset = self.calculate_optimal_offset(cleaned_transcriptions, diarization_segments)
         logger.info(f"Offset appliqué: {offset}s")
         
-        # Appliquer l'offset aux transcriptions pour les aligner sur la diarisation
+        # Appliquer l'offset aux transcriptions
         aligned_source = []
         for t in cleaned_transcriptions:
             t_copy = t.copy()
@@ -152,78 +157,101 @@ class TranscriptionAligner:
             t_copy['end'] += offset
             aligned_source.append(t_copy)
             
-        # 3. Attribution intelligente (Distribution Séquentielle)
-        # On distribue les mots dans les buckets temporels (diarisation)
-        
+        # 3. Alignement avec Spacy (Sentence-Level)
+        if self.nlp:
+            return self._align_with_spacy(aligned_source, diarization_segments)
+        else:
+            return self._align_statistical(aligned_source, diarization_segments)
+
+    def _align_with_spacy(self, transcriptions: List[Dict[str, Any]], 
+                         diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Alignement fin utilisant la détection de phrases de Spacy
+        """
+        # Préparer les buckets
         diar_text_buckets = {i: [] for i in range(len(diarization_segments))}
-        words_distributed = 0
         
-        for trans in aligned_source:
+        for trans in transcriptions:
             t_start = trans.get('start', 0)
             t_end = trans.get('end', 0)
             text = trans.get('text', '').strip()
+            
             if not text: continue
             
-            words = text.split()
-            if not words: continue
+            t_duration = t_end - t_start
+            if t_duration <= 0: continue
             
-            # Trouver quels segments de diarisation chevauchent ce segment de texte
-            overlaps = []
-            for i, diar_seg in enumerate(diarization_segments):
-                d_start = diar_seg['start']
-                d_end = diar_seg['end']
+            # Analyser le segment avec Spacy
+            doc = self.nlp(text)
+            sentences = list(doc.sents)
+            
+            if not sentences: # Cas rare, traiter comme un bloc
+                sentences = [doc] # Traiter tout le doc comme une span
+            
+            # Pour chaque phrase, estimer son timestamp
+            # Hypothèse : distribution linéaire des caractères
+            total_chars = len(text)
+            char_duration = t_duration / total_chars if total_chars > 0 else 0
+            
+            for sent in sentences:
+                sent_text = sent.text.strip()
+                if not sent_text: continue
                 
-                # Calcul de l'overlap
-                ov_start = max(t_start, d_start)
-                ov_end = min(t_end, d_end)
-                duration = max(0, ov_end - ov_start)
+                # Calculer offset relatif
+                sent_start_char = sent.start_char
+                sent_end_char = sent.end_char
                 
-                if duration > 0.05: # Ignorer les micro-overlaps (<50ms)
-                    overlaps.append({
-                        'index': i,
-                        'duration': duration,
-                        'start': ov_start
-                    })
-            
-            if not overlaps:
-                continue
+                sent_start_time = t_start + (sent_start_char * char_duration)
+                sent_end_time = t_start + (sent_end_char * char_duration)
+                sent_mid_time = (sent_start_time + sent_end_time) / 2
                 
-            # Trier les overlaps par ordre chronologique
-            overlaps.sort(key=lambda x: x['start'])
-            
-            # Distribuer les mots proportionnellement à la durée de l'overlap
-            total_duration = sum(o['duration'] for o in overlaps)
-            if total_duration == 0: continue
-            
-            current_word_idx = 0
-            for i, ov in enumerate(overlaps):
-                # Si c'est le dernier overlap, on lui donne tout le reste pour ne rien perdre
-                if i == len(overlaps) - 1:
-                    chunk = words[current_word_idx:]
+                # Trouver le meilleur segment de diarisation
+                best_diar_idx = -1
+                best_overlap = 0
+                max_center_in = False
+                
+                for i, diar_seg in enumerate(diarization_segments):
+                    d_start = diar_seg['start']
+                    d_end = diar_seg['end']
+                    
+                    # Chevauchement
+                    ov_start = max(sent_start_time, d_start)
+                    ov_end = min(sent_end_time, d_end)
+                    overlap = max(0, ov_end - ov_start)
+                    
+                    # Si le centre de la phrase est dans le segment, c'est un candidat fort
+                    if d_start <= sent_mid_time <= d_end:
+                        max_center_in = True
+                        best_diar_idx = i
+                        break # On privilégie le segment central
+                    
+                    if overlap > best_overlap:
+                        best_overlap = overlap
+                        best_diar_idx = i
+                
+                if best_diar_idx != -1:
+                    diar_text_buckets[best_diar_idx].append(sent_text)
                 else:
-                    ratio = ov['duration'] / total_duration
-                    count = int(round(len(words) * ratio))
-                    # S'assurer qu'on avance si le ratio est significatif
-                    if count == 0 and len(words) > 0 and ratio > 0.2: count = 1
+                    # Si pas d'overlap trouvé (ex: trou dans la diarisation),
+                    # on l'assigne au segment le plus proche temporellement
+                    closest_idx = -1
+                    min_dist = float('inf')
                     
-                    chunk = words[current_word_idx : current_word_idx + count]
-                    current_word_idx += count
-                
-                if chunk:
-                    diar_text_buckets[ov['index']].append(" ".join(chunk))
-                    words_distributed += len(chunk)
+                    for i, diar_seg in enumerate(diarization_segments):
+                        dist = min(abs(diar_seg['start'] - sent_end_time), 
+                                   abs(diar_seg['end'] - sent_start_time))
+                        if dist < min_dist:
+                            min_dist = dist
+                            closest_idx = i
                     
-        logger.info(f"Mots distribués: {words_distributed}")
-                    
-        # Construire le résultat final
-        total_mapped = 0
+                    if closest_idx != -1:
+                        diar_text_buckets[closest_idx].append(sent_text)
+
+        # Reconstruire les segments
         final_segments = []
         for i, diar_seg in enumerate(diarization_segments):
             text_parts = diar_text_buckets[i]
             final_text = " ".join(text_parts).strip()
-            
-            if final_text:
-                total_mapped += 1
             
             final_segments.append({
                 "start": diar_seg['start'],
@@ -232,8 +260,64 @@ class TranscriptionAligner:
                 "text": final_text
             })
             
-        logger.info(f"Segments mappés avec texte: {total_mapped}/{len(final_segments)}")
+        return final_segments
 
+    def _align_statistical(self, transcriptions: List[Dict[str, Any]], 
+                          diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Ancienne méthode statistique (fallback)
+        """
+        diar_text_buckets = {i: [] for i in range(len(diarization_segments))}
+        
+        for trans in transcriptions:
+            t_start = trans.get('start', 0)
+            t_end = trans.get('end', 0)
+            text = trans.get('text', '').strip()
+            if not text: continue
+            
+            words = text.split()
+            if not words: continue
+            
+            overlaps = []
+            for i, diar_seg in enumerate(diarization_segments):
+                d_start = diar_seg['start']
+                d_end = diar_seg['end']
+                ov_start = max(t_start, d_start)
+                ov_end = min(t_end, d_end)
+                duration = max(0, ov_end - ov_start)
+                
+                if duration > 0.05:
+                    overlaps.append({'index': i, 'duration': duration, 'start': ov_start})
+            
+            if not overlaps: continue
+            overlaps.sort(key=lambda x: x['start'])
+            
+            total_duration = sum(o['duration'] for o in overlaps)
+            if total_duration == 0: continue
+            
+            current_word_idx = 0
+            for i, ov in enumerate(overlaps):
+                if i == len(overlaps) - 1:
+                    chunk = words[current_word_idx:]
+                else:
+                    ratio = ov['duration'] / total_duration
+                    count = int(round(len(words) * ratio))
+                    if count == 0 and len(words) > 0 and ratio > 0.2: count = 1
+                    chunk = words[current_word_idx : current_word_idx + count]
+                    current_word_idx += count
+                
+                if chunk:
+                    diar_text_buckets[ov['index']].append(" ".join(chunk))
+                    
+        final_segments = []
+        for i, diar_seg in enumerate(diarization_segments):
+            final_text = " ".join(diar_text_buckets[i]).strip()
+            final_segments.append({
+                "start": diar_seg['start'],
+                "end": diar_seg['end'],
+                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
+                "text": final_text
+            })
         return final_segments
     
     def distribute_by_chronological_order(self, full_text: str,
@@ -333,108 +417,11 @@ class TranscriptionAligner:
         
         return transcriptions
     
-    def distribute_by_linguistic_cues(self, full_text: str,
-                                     diarization_segments: List[Dict[str, Any]],
-                                     total_speech_duration: float) -> List[Dict[str, Any]]:
-        """
-        Distribue le texte complet selon les segments de diarisation en utilisant des indices linguistiques
-        
-        Args:
-            full_text: Texte complet de la transcription
-            diarization_segments: Segments de diarisation avec speakers
-            total_speech_duration: Durée totale de parole en secondes
-            
-        Returns:
-            list: Segments mappés avec speaker et texte distribué par phrases complètes
-        """
-        logger.info(f"Distribution linguistique: {len(full_text)} caractères sur {len(diarization_segments)} segments")
-        
-        # Découper le texte en phrases
-        sentence_pattern = r'([.!?])\s+'
-        sentences = re.split(sentence_pattern, full_text)
-        
-        # Reconstruire les phrases complètes avec leur ponctuation
-        complete_sentences = []
-        i = 0
-        while i < len(sentences):
-            sentence = sentences[i].strip()
-            if i + 1 < len(sentences):
-                punctuation = sentences[i + 1]
-                sentence += punctuation
-                i += 2
-            else:
-                i += 1
-            
-            if sentence:
-                complete_sentences.append(sentence)
-        
-        complete_sentences = [s.strip() for s in complete_sentences if s.strip()]
-        total_sentences = len(complete_sentences)
-        logger.info(f"Découpage en phrases: {total_sentences} phrases détectées")
-        
-        if total_sentences == 0:
-            logger.warning("Aucune phrase détectée, utilisation de la distribution par mots")
-            return self._distribute_by_words(full_text, diarization_segments, total_speech_duration)
-        
-        # Distribuer les phrases aux segments proportionnellement
-        transcriptions = []
-        sentence_index = 0
-        
-        for seg_idx, diar_seg in enumerate(diarization_segments):
-            diar_start = diar_seg.get('start', 0)
-            diar_end = diar_seg.get('end', 0)
-            diar_duration = diar_end - diar_start
-            
-            if diar_duration > 0 and total_speech_duration > 0:
-                sentences_for_segment = (diar_duration / total_speech_duration) * total_sentences
-                sentences_count = max(0, int(round(sentences_for_segment)))
-            else:
-                sentences_count = 0
-            
-            segment_sentences = []
-            if sentences_count > 0 and sentence_index < total_sentences:
-                end_index = min(sentence_index + sentences_count, total_sentences)
-                segment_sentences = complete_sentences[sentence_index:end_index]
-                sentence_index = end_index
-            
-            segment_text = " ".join(segment_sentences).strip()
-            
-            if seg_idx < 3:
-                logger.debug(f"Segment {seg_idx + 1}: [{diar_start:.1f}s - {diar_end:.1f}s] speaker={diar_seg.get('speaker', 'UNKNOWN')} -> {len(segment_sentences)} phrases")
-            
-            transcriptions.append({
-                "start": diar_start,
-                "end": diar_end,
-                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
-                "text": segment_text
-            })
-        
-        # Distribuer les phrases restantes
-        if sentence_index < total_sentences:
-            remaining_sentences = complete_sentences[sentence_index:]
-            remaining_text = " ".join(remaining_sentences).strip()
-            if transcriptions:
-                transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
-                logger.info(f"Ajout de {len(remaining_sentences)} phrases restantes au dernier segment")
-        
-        segments_with_text = sum(1 for t in transcriptions if t.get('text', '').strip())
-        logger.info(f"Distribution linguistique terminée: {segments_with_text}/{len(transcriptions)} segments avec texte")
-        
-        return transcriptions
-    
     def fill_missing_segments(self, transcriptions: List[Dict[str, Any]],
                               full_text: str,
                               diarization_segments: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
         """
         Complète les segments sans texte avec distribution séquentielle
-        
-        Args:
-            transcriptions: Segments de transcription (certains peuvent être vides)
-            full_text: Texte complet
-            diarization_segments: Segments de diarisation
-            
-        Returns:
-            list: Segments complétés
         """
         segments_without_text = [i for i, t in enumerate(transcriptions) 
                                 if not t.get('text', '').strip()]
@@ -478,56 +465,5 @@ class TranscriptionAligner:
                         seg_sentences = complete_sentences[sentence_index:end_idx]
                         transcriptions[idx]["text"] = " ".join(seg_sentences).strip()
                         sentence_index = end_idx
-        
-        return transcriptions
-    
-    def _distribute_by_words(self, full_text: str,
-                            diarization_segments: List[Dict[str, Any]],
-                            total_speech_duration: float) -> List[Dict[str, Any]]:
-        """
-        Fallback : distribue le texte par mots si aucune phrase détectée
-        
-        Args:
-            full_text: Texte complet
-            diarization_segments: Segments de diarisation
-            total_speech_duration: Durée totale de parole
-            
-        Returns:
-            list: Segments avec texte distribué
-        """
-        words = full_text.split()
-        total_words = len(words)
-        text_index = 0
-        transcriptions = []
-        
-        for diar_seg in diarization_segments:
-            diar_start = diar_seg.get('start', 0)
-            diar_end = diar_seg.get('end', 0)
-            diar_duration = diar_end - diar_start
-            
-            if diar_duration > 0 and total_speech_duration > 0:
-                words_for_segment = int((diar_duration / total_speech_duration) * total_words)
-            else:
-                words_for_segment = 0
-            
-            if words_for_segment > 0 and text_index < total_words:
-                segment_words = words[text_index:text_index + words_for_segment]
-                segment_text = " ".join(segment_words)
-                text_index += words_for_segment
-            else:
-                segment_text = ""
-            
-            transcriptions.append({
-                "start": diar_start,
-                "end": diar_end,
-                "speaker": diar_seg.get('speaker', 'UNKNOWN'),
-                "text": segment_text
-            })
-        
-        # Ajouter les mots restants au dernier segment
-        if text_index < total_words and transcriptions:
-            remaining_words = words[text_index:]
-            remaining_text = " ".join(remaining_words)
-            transcriptions[-1]["text"] = (transcriptions[-1]["text"] + " " + remaining_text).strip()
         
         return transcriptions

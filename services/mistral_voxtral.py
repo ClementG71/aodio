@@ -22,6 +22,7 @@ from services.audio_segmenter import AudioSegmenter
 from services.transcription_mapper import TranscriptionMapper
 from services.transcription_aligner import TranscriptionAligner
 from services.circuit_breaker import mistral_breaker, CircuitBreakerOpen
+from services.terminology_service import TerminologyService
 
 logger = logging.getLogger(__name__)
 
@@ -56,6 +57,7 @@ class MistralVoxtralClient:
         self.segmenter = AudioSegmenter(max_segment_duration=self.max_segment_duration)
         self.mapper = TranscriptionMapper()
         self.aligner = TranscriptionAligner()
+        self.terminology_service = TerminologyService()
     
     def _call_api(self, api_func, *args, **kwargs):
         """
@@ -133,10 +135,22 @@ class MistralVoxtralClient:
         duration = self.segmenter.get_audio_duration(audio_path)
         logger.info(f"Transcription brute - Durée: {duration:.1f}s")
         
+        result = {}
         if duration <= self.max_audio_duration_before_split:
-            return self._transcribe_segment(audio_path, language)
+            result = self._transcribe_segment(audio_path, language)
         else:
-            return self._transcribe_long_audio_raw(audio_path, language)
+            result = self._transcribe_long_audio_raw(audio_path, language)
+            
+        # Application de la correction terminologique
+        if result.get('full_text'):
+            result['full_text'] = self.terminology_service.correct_text(result['full_text'])
+            
+        if result.get('segments'):
+            for seg in result['segments']:
+                if seg.get('text'):
+                    seg['text'] = self.terminology_service.correct_text(seg['text'])
+                    
+        return result
 
     def _transcribe_long_audio_raw(self, audio_path: str, language: str) -> Dict[str, Any]:
         """

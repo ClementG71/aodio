@@ -232,12 +232,12 @@ class RunPodWorker:
         sorted_segments = sorted(segments, key=lambda x: x['start'])
         cleaned_segments = []
         
-        # 1. Nettoyage initial (suppression des micro-segments < 0.3s)
+        # 1. Nettoyage initial (suppression des micro-segments < 0.15s)
         # On garde les segments courts s'ils semblent isolés (potentiel "Oui/Non")
         # mais on supprime les "glitchs" très courts collés à d'autres
         for seg in sorted_segments:
             duration = seg['end'] - seg['start']
-            if duration >= 0.3:
+            if duration >= 0.15:
                 cleaned_segments.append(seg)
             else:
                 logger.debug(f"Suppression segment trop court: {duration:.3f}s ({seg['start']}-{seg['end']})")
