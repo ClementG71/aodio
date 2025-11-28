@@ -11,6 +11,7 @@ from flask import Flask, render_template, request, jsonify, send_file, session
 from werkzeug.utils import secure_filename
 from werkzeug.exceptions import RequestEntityTooLarge
 import logging
+import concurrent.futures
 from dotenv import load_dotenv
 
 # Chargement des variables d'environnement
@@ -480,20 +481,50 @@ def process_audio_pipeline(session_id, metadata):
     try:
         log_manager.log_status(session_id, 'processing', 'Démarrage du traitement')
         
-        # 1. Diarisation avec Pyannote (via RunPod)
-        log_manager.log_status(session_id, 'diarization', 'Démarrage de la diarisation')
-        diarization_result = runpod_worker.diarize_audio(metadata['processed_audio'])
-        log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+        # 1. Diarisation et Transcription en parallèle (Text-First)
+        log_manager.log_status(session_id, 'processing', 'Lancement Diarisation et Transcription en parallèle...')
         
-        # 2. Transcription avec Voxtral (directement via API Mistral AI)
-        log_manager.log_status(session_id, 'transcription', 'Démarrage de la transcription')
-        diarization_segments = diarization_result.get('segments', [])
-        transcription_result = mistral_client.transcribe_audio(
-            audio_path=metadata['processed_audio'],
-            diarization_segments=diarization_segments,
-            language="fr"
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            # Diarisation (RunPod)
+            future_diar = executor.submit(runpod_worker.diarize_audio, metadata['processed_audio'])
+            
+            # Transcription Text-First (Mistral)
+            # Utilise la nouvelle méthode brute qui garantit le verbatim
+            future_trans = executor.submit(mistral_client.transcribe_file_full, metadata['processed_audio'], "fr")
+            
+            # Attente résultats
+            try:
+                diarization_result = future_diar.result()
+                log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+            except Exception as e:
+                logger.error(f"Erreur Diarisation: {e}")
+                raise
+            
+            try:
+                raw_transcription = future_trans.result()
+                log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
+            except Exception as e:
+                logger.error(f"Erreur Transcription: {e}")
+                raise
+
+        # 2. Alignement (Fusion)
+        log_manager.log_status(session_id, 'processing', 'Alignement Audio/Texte en cours...')
+        
+        aligned_segments = mistral_client.aligner.align_strict_improved(
+            raw_transcription.get('segments', []),
+            diarization_result.get('segments', []),
+            raw_transcription.get('full_text', '')
         )
-        log_manager.log_status(session_id, 'transcription', 'Transcription terminée', transcription_result)
+        
+        # Validation finale
+        mistral_client.mapper.validate_mapping(aligned_segments, diarization_result.get('segments', []))
+        
+        # Reconstruction résultat standard
+        transcription_result = {
+            "segments": aligned_segments,
+            "full_text": raw_transcription.get('full_text', '')
+        }
+        log_manager.log_status(session_id, 'transcription', 'Transcription alignée et validée', transcription_result)
         
         # 3. Traitement LLM (Full Mistral)
         log_manager.log_status(session_id, 'llm_processing', 'Démarrage du traitement LLM (Mistral)')

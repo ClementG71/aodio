@@ -111,23 +111,27 @@ class TranscriptionAligner:
                              diarization_segments: List[Dict[str, Any]],
                              full_text: str = "") -> List[Dict[str, Any]]:
         """
-        Alignement strict amélioré avec correction d'offset et distribution proportionnelle
+        Alignement Text-First : Fusionne la transcription brute avec la diarisation
+        en distribuant les mots selon les chevauchements temporels.
         
         Args:
-            transcriptions: Segments de transcription
-            diarization_segments: Segments de diarisation
-            full_text: Texte complet (pour compléter les trous)
+            transcriptions: Segments de transcription bruts (avec timestamps)
+            diarization_segments: Segments de diarisation (buckets temporels)
+            full_text: Texte complet (pour validation/complétion)
             
         Returns:
-            list: Segments alignés
+            list: Segments alignés {start, end, speaker, text}
         """
-        # 1. Nettoyage préalable
+        # 1. Nettoyage et tri
         cleaned_transcriptions = self.clean_transcription_segments(transcriptions)
+        cleaned_transcriptions.sort(key=lambda x: x.get('start', 0))
         
-        # 2. Calcul et application de l'offset optimal
+        diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        
+        # 2. Calcul et application de l'offset optimal (alignement temporel global)
         offset = self.calculate_optimal_offset(cleaned_transcriptions, diarization_segments)
         
-        # Appliquer l'offset aux transcriptions
+        # Appliquer l'offset aux transcriptions pour les aligner sur la diarisation
         aligned_source = []
         for t in cleaned_transcriptions:
             t_copy = t.copy()
@@ -135,54 +139,77 @@ class TranscriptionAligner:
             t_copy['end'] += offset
             aligned_source.append(t_copy)
             
-        aligned_source.sort(key=lambda x: x.get('start', 0))
-        diarization_segments = sorted(diarization_segments, key=lambda x: x.get('start', 0))
+        # 3. Attribution intelligente (Distribution Séquentielle)
+        # On distribue les mots dans les buckets temporels (diarisation)
         
-        final_segments = []
+        diar_text_buckets = {i: [] for i in range(len(diarization_segments))}
         
-        # 3. Attribution proportionnelle
-        for diar_seg in diarization_segments:
-            diar_start = diar_seg.get('start', 0)
-            diar_end = diar_seg.get('end', 0)
+        for trans in aligned_source:
+            t_start = trans.get('start', 0)
+            t_end = trans.get('end', 0)
+            text = trans.get('text', '').strip()
+            if not text: continue
             
-            segment_text_parts = []
+            words = text.split()
+            if not words: continue
             
-            for trans in aligned_source:
-                trans_start = trans.get('start', 0)
-                trans_end = trans.get('end', 0)
-                trans_text = trans.get('text', '').strip()
+            # Trouver quels segments de diarisation chevauchent ce segment de texte
+            overlaps = []
+            for i, diar_seg in enumerate(diarization_segments):
+                d_start = diar_seg['start']
+                d_end = diar_seg['end']
                 
-                if not trans_text: continue
+                # Calcul de l'overlap
+                ov_start = max(t_start, d_start)
+                ov_end = min(t_end, d_end)
+                duration = max(0, ov_end - ov_start)
                 
-                # Chevauchement
-                overlap_start = max(trans_start, diar_start)
-                overlap_end = min(trans_end, diar_end)
-                overlap_duration = max(0, overlap_end - overlap_start)
+                if duration > 0.05: # Ignorer les micro-overlaps (<50ms)
+                    overlaps.append({
+                        'index': i,
+                        'duration': duration,
+                        'start': ov_start
+                    })
+            
+            if not overlaps:
+                continue
                 
-                if overlap_duration > 0:
-                    trans_duration = trans_end - trans_start
-                    ratio = overlap_duration / trans_duration if trans_duration > 0 else 0
+            # Trier les overlaps par ordre chronologique
+            overlaps.sort(key=lambda x: x['start'])
+            
+            # Distribuer les mots proportionnellement à la durée de l'overlap
+            total_duration = sum(o['duration'] for o in overlaps)
+            if total_duration == 0: continue
+            
+            current_word_idx = 0
+            for i, ov in enumerate(overlaps):
+                # Si c'est le dernier overlap, on lui donne tout le reste pour ne rien perdre
+                if i == len(overlaps) - 1:
+                    chunk = words[current_word_idx:]
+                else:
+                    ratio = ov['duration'] / total_duration
+                    count = int(round(len(words) * ratio))
+                    # S'assurer qu'on avance si le ratio est significatif
+                    if count == 0 and len(words) > 0 and ratio > 0.2: count = 1
                     
-                    if ratio > 0.9:
-                        segment_text_parts.append(trans_text)
-                    elif ratio > 0.1:
-                        words = trans_text.split()
-                        num_words = max(1, int(len(words) * ratio))
-                        segment_text_parts.append(" ".join(words[:num_words]))
-            
-            final_text = " ".join(segment_text_parts).strip()
+                    chunk = words[current_word_idx : current_word_idx + count]
+                    current_word_idx += count
+                
+                if chunk:
+                    diar_text_buckets[ov['index']].append(" ".join(chunk))
+                    
+        # Construire le résultat final
+        final_segments = []
+        for i, diar_seg in enumerate(diarization_segments):
+            text_parts = diar_text_buckets[i]
+            final_text = " ".join(text_parts).strip()
             
             final_segments.append({
-                "start": diar_start,
-                "end": diar_end,
+                "start": diar_seg['start'],
+                "end": diar_seg['end'],
                 "speaker": diar_seg.get('speaker', 'UNKNOWN'),
                 "text": final_text
             })
-
-        # 4. Combler les trous avec full_text si nécessaire
-        empty_indices = [i for i, seg in enumerate(final_segments) if not seg['text']]
-        if empty_indices and full_text:
-            logger.info(f"Remplissage de {len(empty_indices)} segments vides avec full_text")
 
         return final_segments
     

@@ -78,9 +78,9 @@ class MistralVoxtralClient:
                         diarization_segments: List[Dict[str, Any]],
                         language: str = "fr") -> Dict[str, Any]:
         """
-        Transcrit un fichier audio avec routage intelligent :
-        - Méthode principale : Voxtral-Small en mode chat avec contexte diarisation
-        - Fallback : Méthode classique (Voxtral Mini) en dernier recours
+        Nouvelle implémentation Text-First :
+        1. Transcrit tout l'audio (Master Text) pour garantir le verbatim
+        2. Aligne avec la diarisation (Master Time) pour attribuer les locuteurs
         
         Args:
             audio_path: Chemin du fichier audio local
@@ -90,26 +90,104 @@ class MistralVoxtralClient:
         Returns:
             dict: Transcription avec segments mappés aux speakers
         """
-        if self.use_voxtral_small_chat:
-            try:
-                duration = self.segmenter.get_audio_duration(audio_path)
-                audio_url = self._get_audio_url(audio_path)
-                
-                if duration <= self.max_duration_for_voxtral_small_chat:
-                    logger.info(f"Fichier court ({duration:.1f}s), utilisation Voxtral-Small chat")
-                    return self._transcribe_with_voxtral_small_chat(
-                        audio_path, audio_url, diarization_segments, language
-                    )
-                else:
-                    logger.info(f"Fichier long ({duration:.1f}s), découpage en segments avec Voxtral-Small")
-                    return self._transcribe_long_audio_with_voxtral_small(
-                        audio_path, audio_url, diarization_segments, language
-                    )
-            except Exception as e:
-                logger.error(f"Erreur avec Voxtral-Small chat: {e}, fallback sur méthode classique")
-                return self._transcribe_audio_classic(audio_path, diarization_segments, language)
+        try:
+            # 1. Transcription brute (Text-First)
+            logger.info("Démarrage transcription Text-First (indépendante de la diarisation)")
+            raw_transcription = self.transcribe_file_full(audio_path, language)
+            
+            # 2. Alignement
+            logger.info(f"Alignement : Fusion de {len(raw_transcription['segments'])} segments texte avec {len(diarization_segments)} segments diarisation")
+            aligned_segments = self.aligner.align_strict_improved(
+                raw_transcription['segments'],
+                diarization_segments,
+                raw_transcription['full_text']
+            )
+            
+            # 3. Validation
+            self.mapper.validate_mapping(aligned_segments, diarization_segments)
+            
+            return {
+                "segments": aligned_segments,
+                "full_text": raw_transcription['full_text']
+            }
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de la transcription Text-First: {e}", exc_info=True)
+            raise
+
+    def transcribe_file_full(self, audio_path: str, language: str = "fr") -> Dict[str, Any]:
+        """
+        Transcrit le fichier audio complet sans tenir compte de la diarisation.
+        Gère le découpage automatique si nécessaire.
+        
+        Args:
+            audio_path: Chemin du fichier audio
+            language: Langue (fr)
+            
+        Returns:
+            dict: {
+                "full_text": str,
+                "segments": List[Dict]  # Segments Mistral bruts avec timestamps
+            }
+        """
+        duration = self.segmenter.get_audio_duration(audio_path)
+        logger.info(f"Transcription brute - Durée: {duration:.1f}s")
+        
+        if duration <= self.max_audio_duration_before_split:
+            return self._transcribe_segment(audio_path, language)
         else:
-            return self._transcribe_audio_classic(audio_path, diarization_segments, language)
+            return self._transcribe_long_audio_raw(audio_path, language)
+
+    def _transcribe_long_audio_raw(self, audio_path: str, language: str) -> Dict[str, Any]:
+        """
+        Découpe et transcrit un long fichier audio (mode brut)
+        """
+        output_dir = Path(audio_path).parent
+        # Découpage en blocs de 10 min
+        audio_segments = self.segmenter.split_audio(
+            audio_path, output_dir, self.voxtral_small_segment_duration
+        )
+        
+        all_segments = []
+        full_text_parts = []
+        
+        # Utiliser le contextmanager pour le nettoyage automatique
+        with self.segmenter.temporary_segments(audio_segments):
+            for i, seg_info in enumerate(audio_segments):
+                logger.info(f"Traitement bloc {i+1}/{len(audio_segments)} ({seg_info['start_time']:.0f}s - {seg_info['end_time']:.0f}s)")
+                
+                try:
+                    # Transcription du bloc
+                    result = self._transcribe_segment(seg_info['path'], language)
+                    
+                    # Ajustement des timestamps
+                    offset = seg_info['start_time']
+                    for seg in result.get('segments', []):
+                        # Normalisation des objets segments
+                        s_start = getattr(seg, 'start', seg.get('start', 0))
+                        s_end = getattr(seg, 'end', seg.get('end', 0))
+                        s_text = getattr(seg, 'text', seg.get('text', ''))
+                        
+                        all_segments.append({
+                            "start": s_start + offset,
+                            "end": s_end + offset,
+                            "text": s_text,
+                            "speaker": "UNKNOWN" # Sera rempli par l'alignement
+                        })
+                    
+                    if result.get('text'):
+                        full_text_parts.append(result['text'])
+                        
+                except Exception as e:
+                    logger.error(f"Erreur transcription bloc {i+1}: {e}")
+                    # On continue avec les autres blocs pour sauver ce qu'on peut
+                    continue
+                    
+        return {
+            "segments": all_segments,
+            "full_text": " ".join(full_text_parts)
+        }
+
     
     def _get_audio_url(self, audio_path: str) -> str:
         """
