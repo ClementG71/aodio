@@ -1,12 +1,7 @@
 # Dockerfile pour RunPod Worker - situé dans runpod_worker/
-# Ce Dockerfile est utilisé par RunPod pour builder l'image du worker
-# Note: Le contexte de build RunPod est toujours la racine du repo,
-# donc les chemins COPY utilisent runpod_worker/ comme préfixe
-# PyTorch 2.5.1 avec CUDA 12.1 pour compatibilité avec pyannote.audio 3.3.1+
-# Note: pyannote.audio 3.3.1+ corrige l'incompatibilité avec NumPy 2.0
-# Note: PyTorch 2.8 n'est pas encore disponible, on utilise 2.5.1
-# Utilisation d'une image PyTorch officielle
-FROM pytorch/pytorch:2.5.1-cuda12.1-cudnn9-devel
+# Utilisation de PyTorch 2.6.0 qui inclut Python 3.10+ requis par Pyannote 4.0.1
+# Cette image contient CUDA 12.6, compatible avec la plupart des GPU RunPod
+FROM pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
 
 # Installer les dépendances système (cette couche sera mise en cache)
 RUN apt-get update && apt-get install -y \
@@ -18,20 +13,15 @@ RUN apt-get update && apt-get install -y \
 WORKDIR /app
 
 # Copier uniquement requirements.txt d'abord (pour maximiser le cache)
-# Si requirements.txt ne change pas, cette couche sera réutilisée
 COPY runpod_worker/requirements.txt ./requirements.txt
 
 # Installer les dépendances Python
-# Note: torch et torchaudio sont déjà dans l'image de base (PyTorch 2.5.1 avec CUDA 12.1)
-# On les spécifie dans requirements.txt pour éviter que pyannote.audio ne les remplace
-# On utilise --no-cache-dir pour réduire la taille, mais le cache Docker accélérera les builds suivants
+# Note: pyannote.audio 4.0.1 nécessite torch >= 2.6.0 et python >= 3.10
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le handler en dernier (change le plus souvent)
-# On copie depuis runpod_worker/ (source de vérité) vers /app/handler.py
 COPY runpod_worker/handler.py ./handler.py
 
 # Commande de démarrage
 CMD ["python", "handler.py"]
-

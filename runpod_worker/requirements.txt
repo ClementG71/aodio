@@ -1,20 +1,11 @@
 # Dépendances légères d'abord (pour meilleur cache)
 runpod>=1.0.0
 requests>=2.31.0
-# pyannote.audio 3.3.1 utilise encore use_auth_token (déprécié dans huggingface_hub >= 0.20.0)
-# On utilise une version compatible qui supporte encore use_auth_token
-huggingface_hub>=0.19.0,<0.20.0
+huggingface_hub>=0.23.0
 
-# PyTorch - L'image de base a déjà PyTorch 2.5.1 avec CUDA 12.1
-# On spécifie explicitement pour éviter les réinstallations non désirées
-# Note: PyTorch 2.8 n'est pas encore disponible, on utilise 2.5.1
-# pyannote.audio 3.3.1+ est compatible avec PyTorch 2.5.1 et NumPy 2.0
-torch==2.5.1
-torchaudio==2.5.1
+# PyTorch - Pyannote 4.0.1 recommande torch 2.6.0 ou compatible
+torch>=2.6.0
+torchaudio>=2.6.0
 
-# Pyannote (lourd, installe en dernier)
-# pyannote.audio 3.3.1+ corrige l'incompatibilité avec NumPy 2.0 (np.NaN -> np.nan)
-# Compatible avec PyTorch 2.5.1 et NumPy 2.0
-# Note: pyannote.audio 4.0.1 nécessite torch>=2.8.0 (pas encore disponible dans les images Docker)
-pyannote.audio>=3.3.1,<4.0.0
-
+# Pyannote 4.0.1+
+pyannote.audio>=4.0.1
