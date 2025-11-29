@@ -2,13 +2,30 @@
 Worker RunPod pour la diarisation avec Pyannote 4.0.1+
 Ce fichier doit être déployé sur RunPod
 """
-import os
-import tempfile
-import requests
-import runpod
-from pyannote.audio import Pipeline
-import torch
-from huggingface_hub import login
+import sys
+import traceback
+
+# Bloc try/except global pour capturer les erreurs d'import au démarrage
+try:
+    import os
+    import tempfile
+    import requests
+    import runpod
+    import torch
+    from huggingface_hub import login
+    # Import Pyannote différé ou protégé pour diagnostiquer
+    try:
+        from pyannote.audio import Pipeline
+        print("Import Pyannote.audio réussi")
+    except ImportError as e:
+        print(f"CRITICAL: Erreur import pyannote.audio: {e}")
+        traceback.print_exc()
+        raise
+
+except Exception as e:
+    print(f"CRITICAL: Erreur au démarrage du worker: {e}")
+    traceback.print_exc()
+    sys.exit(1)
 
 # Configuration
 DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"

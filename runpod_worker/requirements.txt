@@ -1,11 +1,13 @@
-# Dépendances légères d'abord (pour meilleur cache)
+# Dépendances système et utilitaires
 runpod>=1.0.0
 requests>=2.31.0
 huggingface_hub>=0.23.0
+scipy>=1.10.0
+soundfile>=0.12.1
 
-# PyTorch - Pyannote 4.0.1 recommande torch 2.6.0 ou compatible
-torch>=2.6.0
-torchaudio>=2.6.0
-
-# Pyannote 4.0.1+
-pyannote.audio>=4.0.1
+# Dépendances Pyannote
+# On fixe les versions compatibles pour éviter les conflits
+pyannote.audio>=3.3.1
+speechbrain>=1.0.0
+einops>=0.7.0
+omegaconf>=2.3.0
