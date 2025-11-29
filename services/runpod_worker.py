@@ -145,7 +145,7 @@ class RunPodWorker:
                     api_url,
                     headers=self.headers,
                     json=payload,
-                    timeout=300
+                    timeout=600  # Augmentation du timeout à 10 minutes pour les cold starts
                 )
             
             # Log de la réponse pour debug
