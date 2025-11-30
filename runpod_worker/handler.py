@@ -13,6 +13,19 @@ try:
     import runpod
     import torch
     from huggingface_hub import login
+    
+    print(f"DEBUG: Torch version: {torch.__version__}")
+    print(f"DEBUG: CUDA available: {torch.cuda.is_available()}")
+    if torch.cuda.is_available():
+        print(f"DEBUG: CUDA version: {torch.version.cuda}")
+        print(f"DEBUG: Device: {torch.cuda.get_device_name(0)}")
+        
+    try:
+        import torchvision
+        print(f"DEBUG: Torchvision version: {torchvision.__version__}")
+    except ImportError:
+        print("DEBUG: Torchvision not installed")
+
     # Import Pyannote différé ou protégé pour diagnostiquer
     try:
         from pyannote.audio import Pipeline
