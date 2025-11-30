@@ -17,7 +17,9 @@ COPY runpod_worker/requirements.txt ./requirements.txt
 
 # Installer les dépendances Python
 # Note: pyannote.audio 4.0.1 nécessite torch >= 2.6.0 et python >= 3.10
+# IMPORTANT: Installer torchvision depuis l'index PyTorch pour compatibilité CUDA
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu126 torchvision==0.21.0 && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le handler en dernier (change le plus souvent)

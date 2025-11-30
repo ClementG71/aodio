@@ -5,9 +5,11 @@ huggingface_hub>=0.23.0
 scipy>=1.10.0
 soundfile>=0.12.1
 
-# Dépendances Pyannote
-# On fixe les versions compatibles pour éviter les conflits
-pyannote.audio>=3.3.1
+# PyTorch ecosystem - torch et torchaudio sont déjà dans l'image de base
+# torchvision sera installé dans le Dockerfile depuis l'index PyTorch pour compatibilité CUDA
+
+# Dépendances Pyannote 4.0.1+
+pyannote.audio>=4.0.1
 speechbrain>=1.0.0
 einops>=0.7.0
 omegaconf>=2.3.0
