@@ -5,8 +5,10 @@ huggingface_hub>=0.23.0
 scipy>=1.10.0
 soundfile>=0.12.1
 
-# PyTorch ecosystem - torch et torchaudio sont déjà dans l'image de base
-# torchvision sera installé dans le Dockerfile depuis l'index PyTorch pour compatibilité CUDA
+# PyTorch ecosystem - On PINNE les versions pour éviter que pip n'installe une nightly (2.8.0)
+torch==2.6.0
+torchaudio==2.6.0
+torchvision==0.21.0
 
 # Dépendances Pyannote 4.0.1+
 pyannote.audio>=4.0.1
