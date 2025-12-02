@@ -1,18 +1,13 @@
-# Dépendances RunPod Worker - pyannote.audio 4.0.2
-# Note: torch/torchvision/torchaudio sont installés dans le Dockerfile
+# Dépendances RunPod Worker
+# Pyannote.audio gère ses propres dépendances torch/torchaudio/torchvision
 
-# Utilitaires
+# Utilitaires RunPod
 runpod>=1.0.0
 requests>=2.31.0
-huggingface_hub>=0.23.0
-scipy>=1.10.0
-soundfile>=0.12.1
 
-# Pyannote 4.0.2 - version exacte pour éviter les régressions
-# torchcodec sera installé automatiquement comme dépendance de pyannote
+# Pyannote 4.0.2 - installe automatiquement torch, torchaudio, torchvision compatibles
 pyannote.audio==4.0.2
 
-# Dépendances complémentaires
-speechbrain>=1.0.0
-einops>=0.7.0
-omegaconf>=2.3.0
+# Dépendances complémentaires (si non incluses par pyannote)
+huggingface_hub>=0.23.0
+soundfile>=0.12.1
