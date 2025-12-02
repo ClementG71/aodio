@@ -1,6 +1,6 @@
 """
-Worker RunPod pour la diarisation avec Pyannote 4.0.1+
-Ce fichier doit être déployé sur RunPod
+Worker RunPod pour la diarisation avec Pyannote 4.0.2
+PyTorch 2.5.0 + CUDA 12.1 (versions stables)
 """
 import sys
 import traceback
@@ -19,13 +19,6 @@ try:
     if torch.cuda.is_available():
         print(f"DEBUG: CUDA version: {torch.version.cuda}")
         print(f"DEBUG: Device: {torch.cuda.get_device_name(0)}")
-        
-    try:
-        import torchvision
-        print(f"DEBUG: Torchvision version: {torchvision.__version__}")
-    except Exception as e:
-        # Torchvision n'est pas nécessaire pour pyannote, on ignore l'erreur
-        print(f"DEBUG: Torchvision non disponible (non requis): {type(e).__name__}")
 
     # Import Pyannote différé ou protégé pour diagnostiquer
     try:

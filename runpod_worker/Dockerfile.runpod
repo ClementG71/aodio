@@ -1,12 +1,11 @@
-# Dockerfile pour RunPod Worker - situé dans runpod_worker/
-# Utilisation de PyTorch 2.6.0 qui inclut Python 3.10+ requis par Pyannote 4.0.1
-# Cette image contient CUDA 12.6, compatible avec la plupart des GPU RunPod
-FROM pytorch/pytorch:2.6.0-cuda12.6-cudnn9-runtime
+# Dockerfile pour RunPod Worker - pyannote.audio 4.0.2
+# PyTorch 2.5.0 avec CUDA 12.1 - versions stables recommandées par pyannote
+FROM pytorch/pytorch:2.5.0-cuda12.1-cudnn9-runtime
 
 # Force l'affichage immédiat des logs (critique pour le debug)
 ENV PYTHONUNBUFFERED=1
 
-# Installer les dépendances système (cette couche sera mise en cache)
+# Installer les dépendances système (ffmpeg requis par torchcodec)
 RUN apt-get update && apt-get install -y \
     ffmpeg \
     libsndfile1 \
@@ -15,15 +14,15 @@ RUN apt-get update && apt-get install -y \
 # Créer le répertoire de travail
 WORKDIR /app
 
-# Copier uniquement requirements.txt d'abord (pour maximiser le cache)
+# Copier requirements.txt d'abord (pour maximiser le cache)
 COPY runpod_worker/requirements.txt ./requirements.txt
 
-# Installer les dépendances Python
-# Note: pyannote.audio 4.0.1 nécessite torch >= 2.6.0 et python >= 3.10
-# Stratégie: Désinstaller les versions existantes et forcer l'installation de 2.6.0 depuis PyTorch
+# Installation en 2 étapes pour garantir les versions stables
+# 1. Installer torch/torchvision/torchaudio depuis l'index CUDA officiel
+# 2. Installer le reste des dépendances depuis PyPI
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip uninstall -y torch torchvision torchaudio || true && \
-    pip install --no-cache-dir --force-reinstall --index-url https://download.pytorch.org/whl/cu126 torch==2.6.0 torchvision==0.21.0 torchaudio==2.6.0 && \
+    pip install --no-cache-dir --index-url https://download.pytorch.org/whl/cu121 \
+        torch==2.5.0 torchvision==0.20.0 torchaudio==2.5.0 && \
     pip install --no-cache-dir -r requirements.txt
 
 # Copier le handler en dernier (change le plus souvent)
