@@ -23,8 +23,9 @@ try:
     try:
         import torchvision
         print(f"DEBUG: Torchvision version: {torchvision.__version__}")
-    except ImportError:
-        print("DEBUG: Torchvision not installed")
+    except Exception as e:
+        # Torchvision n'est pas nécessaire pour pyannote, on ignore l'erreur
+        print(f"DEBUG: Torchvision non disponible (non requis): {type(e).__name__}")
 
     # Import Pyannote différé ou protégé pour diagnostiquer
     try:
