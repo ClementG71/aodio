@@ -60,6 +60,11 @@ def load_pipeline():
             print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}")
     
     try:
+        # Fix pour PyTorch 2.6+ : autoriser TorchVersion dans torch.load()
+        # (nécessaire car weights_only=True est maintenant le défaut)
+        import torch.torch_version
+        torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
+        
         # Dans Pyannote 4.0, pipeline.to(device) est obligatoire pour GPU
         pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
         
