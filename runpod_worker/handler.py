@@ -60,10 +60,16 @@ def load_pipeline():
             print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}")
     
     try:
-        # Fix pour PyTorch 2.6+ : autoriser TorchVersion dans torch.load()
+        # Fix pour PyTorch 2.6+ : autoriser les classes Pyannote dans torch.load()
         # (nécessaire car weights_only=True est maintenant le défaut)
         import torch.torch_version
-        torch.serialization.add_safe_globals([torch.torch_version.TorchVersion])
+        from pyannote.audio.core.task import Specifications, Problem, Resolution
+        torch.serialization.add_safe_globals([
+            torch.torch_version.TorchVersion,
+            Specifications,
+            Problem,
+            Resolution,
+        ])
         
         # Dans Pyannote 4.0, pipeline.to(device) est obligatoire pour GPU
         pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
