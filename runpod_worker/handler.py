@@ -72,19 +72,30 @@ def load_pipeline():
         ])
         
         # Dans Pyannote 4.0, pipeline.to(device) est obligatoire pour GPU
-        print("Téléchargement du modèle depuis Hugging Face...")
+        print("Téléchargement du modèle depuis Hugging Face...", flush=True)
+        import sys
+        sys.stdout.flush()
+        
+        # Pipeline.from_pretrained peut prendre plusieurs minutes
+        # Il télécharge les modèles (segmentation, embedding, clustering)
         pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
-        print("Modèle téléchargé, déplacement sur GPU...")
+        
+        print("Modèle téléchargé, déplacement sur GPU...", flush=True)
+        sys.stdout.flush()
         
         if torch.cuda.is_available():
             device = torch.device("cuda")
+            print(f"Déplacement du pipeline sur GPU: {device}...", flush=True)
+            sys.stdout.flush()
             pipeline.to(device)
-            print(f"Pipeline déplacé sur GPU: {device}")
-            print(f"VRAM après chargement: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+            print(f"Pipeline déplacé sur GPU: {device}", flush=True)
+            print(f"VRAM après chargement: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
         else:
-            print("Attention: GPU non disponible, utilisation CPU (lent)")
-            
-        print("Modèle Pyannote chargé avec succès!")
+            print("Attention: GPU non disponible, utilisation CPU (lent)", flush=True)
+        
+        sys.stdout.flush()
+        print("Modèle Pyannote chargé avec succès!", flush=True)
+        sys.stdout.flush()
         return pipeline
     except Exception as e:
         error_msg = f"Erreur lors du chargement du pipeline Pyannote: {str(e)}"
@@ -127,16 +138,20 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     if 'num_speakers' in params:
         inference_options['num_speakers'] = int(params['num_speakers'])
         
-    print(f"Lancement diarisation avec options: {inference_options}")
-    print(f"Fichier audio: {audio_path}")
-    print(f"Taille du fichier: {os.path.getsize(audio_path) / (1024*1024):.2f} MB")
+    import sys
+    print(f"Lancement diarisation avec options: {inference_options}", flush=True)
+    print(f"Fichier audio: {audio_path}", flush=True)
+    print(f"Taille du fichier: {os.path.getsize(audio_path) / (1024*1024):.2f} MB", flush=True)
+    sys.stdout.flush()
     
     # Vérifier que le pipeline est bien sur GPU
     if torch.cuda.is_available():
-        print(f"Vérification GPU: {torch.cuda.get_device_name(0)}")
-        print(f"VRAM utilisée avant: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+        print(f"Vérification GPU: {torch.cuda.get_device_name(0)}", flush=True)
+        print(f"VRAM utilisée avant: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
+        sys.stdout.flush()
     
-    print("Appel du pipeline Pyannote (cela peut prendre plusieurs minutes)...")
+    print("Appel du pipeline Pyannote (cela peut prendre plusieurs minutes)...", flush=True)
+    sys.stdout.flush()
     
     # Pyannote 4.0 : appel standard
     if inference_options:
@@ -144,10 +159,12 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     else:
         diarization = pipeline(audio_path)
     
-    print("Pipeline terminé, formatage des résultats...")
+    print("Pipeline terminé, formatage des résultats...", flush=True)
+    sys.stdout.flush()
     
     if torch.cuda.is_available():
-        print(f"VRAM utilisée après: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB")
+        print(f"VRAM utilisée après: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
+        sys.stdout.flush()
     
     # Formatage des résultats
     # Pyannote 4.0 peut renvoyer des labels différents, on standardise
