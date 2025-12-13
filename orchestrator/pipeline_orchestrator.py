@@ -51,6 +51,68 @@ class PipelineOrchestrator:
         self.document_generator = document_generator
         self.log_manager = log_manager
         self.app_base_url = app_base_url
+        
+    def _run_diarization_with_timeout(self, session_id: str, audio_path: str, timeout: int = 900) -> Dict[str, Any]:
+        """
+        Exécute la diarisation avec gestion de timeout et fallback
+        
+        Args:
+            session_id: ID de la session
+            audio_path: Chemin du fichier audio
+            timeout: Timeout en secondes (15 minutes par défaut)
+            
+        Returns:
+            dict: Résultat de la diarisation
+            
+        Raises:
+            TimeoutError: Si la diarisation prend trop de temps
+            Exception: En cas d'erreur critique
+        """
+        import concurrent.futures
+        
+        self.log_manager.log_status(session_id, 'diarization', 'Démarrage de la diarisation avec timeout...')
+        
+        try:
+            # Utiliser un ThreadPoolExecutor avec timeout pour la diarisation
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as diar_executor:
+                future = diar_executor.submit(
+                    self.diarization_service.diarize_audio, 
+                    audio_path
+                )
+                
+                try:
+                    # Attendre le résultat avec timeout
+                    diarization_result = future.result(timeout=timeout)
+                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée avec succès')
+                    return diarization_result
+                    
+                except concurrent.futures.TimeoutError:
+                    self.log_manager.log_status(session_id, 'diarization', 'Timeout atteint pour la diarisation')
+                    logger.warning(f"Diarization timeout après {timeout}s pour la session {session_id}")
+                    
+                    # Annuler le job en cours
+                    future.cancel()
+                    
+                    # Retourner un résultat vide pour permettre la continuation
+                    return {
+                        'segments': [],
+                        'speakers': [],
+                        'status': 'timeout',
+                        'message': f'Diarization timeout après {timeout}s'
+                    }
+                    
+        except Exception as e:
+            error_msg = f"Erreur critique lors de la diarisation: {str(e)}"
+            self.log_manager.log_status(session_id, 'diarization', error_msg)
+            logger.error(error_msg, exc_info=True)
+            
+            # Retourner un résultat d'erreur pour permettre la continuation
+            return {
+                'segments': [],
+                'speakers': [],
+                'status': 'error',
+                'message': error_msg
+            }
     
     def process_audio_pipeline(self, session_id: str, metadata: Dict[str, Any]):
         """
@@ -67,9 +129,10 @@ class PipelineOrchestrator:
             self.log_manager.log_status(session_id, 'processing', 'Lancement Diarisation et Transcription en parallèle...')
             
             with concurrent.futures.ThreadPoolExecutor() as executor:
-                # Diarisation (RunPod)
+                # Diarisation (RunPod) - avec timeout et gestion d'erreurs
                 future_diar = executor.submit(
-                    self.diarization_service.diarize_audio, 
+                    self._run_diarization_with_timeout, 
+                    session_id, 
                     metadata['processed_audio']
                 )
                 
@@ -81,7 +144,19 @@ class PipelineOrchestrator:
                 
                 # Attente résultats
                 diarization_result = future_diar.result()
-                self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+                
+                # Vérifier si la diarisation a réussi
+                if diarization_result.get('status') in ['timeout', 'error']:
+                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation en erreur ou timeout', diarization_result)
+                    logger.warning(f"Diarization issue: {diarization_result.get('message', 'Unknown error')}")
+                    
+                    # Continuer avec un résultat vide plutôt que de bloquer
+                    diarization_result = {
+                        'segments': [],
+                        'speakers': []
+                    }
+                else:
+                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
                 
                 raw_transcription = future_trans.result()
                 self.log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
