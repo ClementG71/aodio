@@ -188,37 +188,179 @@ def create_app():
     
     @app.route('/')
     def index():
-        """Page d'accueil avec formulaire d'upload"""
+        """Page d'accueil avec formulaire d'upload - avec fallback"""
         try:
-            logger.info("Tentative de rendu du template index.html")
-            logger.info(f"Dossier des templates: {app.template_folder}")
-            logger.info(f"Fichiers dans templates: {os.listdir(app.template_folder) if os.path.exists(app.template_folder) else 'Dossier introuvable'}")
+            # Vérification approfondie du template
+            template_path = os.path.join(app.template_folder, 'index.html')
+            logger.info(f"Chemin complet du template: {template_path}")
+            logger.info(f"Template existe: {os.path.exists(template_path)}")
             
-            # Vérifier les variables d'environnement critiques
-            missing_env_vars = []
-            required_vars = ['SECRET_KEY', 'UPLOAD_FOLDER', 'PROCESSED_FOLDER']
-            for var in required_vars:
-                if not os.getenv(var):
-                    missing_env_vars.append(var)
+            if os.path.exists(template_path):
+                logger.info("Template trouvé, rendu normal")
+                return render_template('index.html')
+            else:
+                logger.error("Template index.html introuvable, utilisation du fallback")
+                logger.error(f"Fichiers disponibles dans templates: {os.listdir(app.template_folder) if os.path.exists(app.template_folder) else 'Dossier vide'}")
+                
+                # Page de fallback HTML minimaliste
+                return render_template_string('''
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Aodio - Transcription Audio</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            background-color: #f8f9fa;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 2rem;
+        }
+        
+        header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 2rem 0;
+            margin-bottom: 2rem;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        
+        .alert-banner {
+            background-color: #fff3cd;
+            border-left: 4px solid #ffc107;
+            padding: 1rem;
+            margin-bottom: 2rem;
+            border-radius: 4px;
+        }
+        
+        .alert-banner strong {
+            color: #856404;
+        }
+        
+        .card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+            padding: 2rem;
+            margin-bottom: 2rem;
+        }
+        
+        h1 {
+            font-size: 2.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        h2 {
+            font-size: 1.5rem;
+            margin: 1.5rem 0 1rem;
+            color: #667eea;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: #667eea;
+            color: white;
+            padding: 0.75rem 1.5rem;
+            border-radius: 4px;
+            text-decoration: none;
+            font-weight: 600;
+            transition: background 0.3s;
+            margin-top: 1rem;
+        }
+        
+        .btn:hover {
+            background: #764ba2;
+        }
+        
+        .api-endpoint {
+            background: #f8f9fa;
+            padding: 1rem;
+            border-radius: 4px;
+            margin: 0.5rem 0;
+            border-left: 3px solid #667eea;
+        }
+        
+        .api-endpoint code {
+            background: #e9ecef;
+            padding: 0.2rem 0.5rem;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+    </style>
+</head>
+<body>
+    <header>
+        <div class="container">
+            <h1>Aodio</h1>
+            <p style="font-size: 1.2rem; opacity: 0.9;">Transcription audio et préparation de comptes rendus de réunions</p>
+        </div>
+    </header>
+    
+    <div class="container">
+        <div class="alert-banner">
+            <strong>Information:</strong> L'interface complète est temporairement indisponible en raison d'un problème de déploiement.
+            Nos équipes techniques travaillent sur une résolution. Vous pouvez utiliser l'API directement ou revenir plus tard.
+        </div>
+        
+        <div class="card">
+            <h2>Fonctionnalités disponibles</h2>
+            <p>Notre service permet de :</p>
+            <ul style="margin: 1rem 0 1.5rem; padding-left: 1.5rem;">
+                <li>Transcrire des enregistrements audio en texte</li>
+                <li>Identifier automatiquement les locuteurs</li>
+                <li>Générer des comptes-rendus structurés</li>
+                <li>Extraire les décisions et actions</li>
+            </ul>
+        </div>
+        
+        <div class="card">
+            <h2>Utilisation via API</h2>
+            <p>Vous pouvez utiliser notre service directement via l'API :</p>
             
-            if missing_env_vars:
-                logger.warning(f"Variables d'environnement manquantes: {', '.join(missing_env_vars)}")
+            <div class="api-endpoint">
+                <strong>Upload et traitement :</strong>
+                <code>POST /upload</code>
+                <p style="margin-top: 0.5rem;">Envoyez un fichier audio (WAV, MP3, etc.) avec les métadonnées nécessaires.</p>
+            </div>
             
-            # Vérifier que les dossiers nécessaires existent
-            folders_to_check = [UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER]
-            for folder in folders_to_check:
-                if not os.path.exists(folder):
-                    logger.error(f"Dossier manquant: {folder}")
-                else:
-                    logger.info(f"Dossier vérifié: {folder}")
+            <div class="api-endpoint">
+                <strong>Statut de traitement :</strong>
+                <code>GET /status/&lt;session_id&gt;</code>
+                <p style="margin-top: 0.5rem;">Vérifiez l'avancement du traitement.</p>
+            </div>
             
-            return render_template('index.html')
+            <div class="api-endpoint">
+                <strong>Téléchargement des résultats :</strong>
+                <code>GET /download/&lt;session_id&gt;/&lt;document_type&gt;</code>
+                <p style="margin-top: 0.5rem;">Téléchargez les documents générés (txt, docx, pdf).</p>
+            </div>
+        </div>
+        
+        <div class="card" style="text-align: center;">
+            <h2>Contact Support</h2>
+            <p>Pour toute assistance, contactez notre équipe technique.</p>
+            <a href="mailto:support@aodio.com" class="btn">Contact Support</a>
+        </div>
+    </div>
+</body>
+</html>
+''')
             
         except Exception as e:
-            logger.error(f"Erreur critique lors du rendu du template index.html: {str(e)}", exc_info=True)
-            logger.error(f"Type d'erreur: {type(e).__name__}")
-            logger.error(f"Dossier de travail actuel: {os.getcwd()}")
-            logger.error(f"Contenu du dossier actuel: {os.listdir()}")
+            logger.error(f"Erreur critique lors du rendu: {str(e)}", exc_info=True)
             return f"Erreur interne du serveur: {str(e)}", 500
     
     @app.route('/health')
