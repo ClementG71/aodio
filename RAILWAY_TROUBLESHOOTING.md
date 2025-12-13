@@ -47,10 +47,9 @@ Si vous voyez "No logs yet..." dans l'interface Railway :
 **Solution** :
 - Vérifiez que toutes les variables sont configurées dans Railway :
   - `SECRET_KEY`
-  - `ANTHROPIC_API_KEY`
+  - `MISTRAL_API_KEY`
   - `RUNPOD_API_KEY`
   - `RUNPOD_ENDPOINT_ID`
-  - `MISTRAL_API_KEY`
 
 **Note** : L'application peut démarrer sans ces variables, mais elles sont nécessaires pour utiliser les fonctionnalités.
 

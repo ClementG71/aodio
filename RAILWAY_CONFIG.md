@@ -7,7 +7,6 @@ Ce guide vous aide à configurer toutes les variables d'environnement nécessair
 - [ ] Endpoint RunPod créé et fonctionnel
 - [ ] Endpoint ID RunPod noté
 - [ ] API Key RunPod récupérée
-- [ ] Clé API Anthropic (Claude) obtenue
 - [ ] Clé API Mistral AI obtenue
 
 ## 🔑 Étape 1 : Récupérer les identifiants RunPod
@@ -30,16 +29,10 @@ Ce guide vous aide à configurer toutes les variables d'environnement nécessair
 5. **Copiez la clé** (elle commence généralement par `...`)
 6. ⚠️ **Important** : Vous ne pourrez plus voir cette clé après, sauvegardez-la !
 
-## 🔑 Étape 2 : Récupérer la clé API Anthropic (Claude)
+## 🔑 Étape 2 : Récupérer la clé API Mistral AI
 
-1. Allez sur [https://console.anthropic.com/](https://console.anthropic.com/)
+1. Allez sur [https://console.mistral.ai/](https://console.mistral.ai/)
 2. Connectez-vous ou créez un compte
-3. Allez dans "API Keys" (menu de gauche)
-4. Cliquez sur "Create Key"
-5. Donnez un nom (ex: "aodio-claude")
-6. **Copiez la clé** (commence par `sk-ant-...`)
-
-## 🔑 Étape 3 : Récupérer la clé API Mistral AI
 
 1. Allez sur [https://console.mistral.ai/](https://console.mistral.ai/)
 2. Connectez-vous ou créez un compte
@@ -84,10 +77,10 @@ Cliquez sur **"New Variable"** et ajoutez les variables suivantes **une par une*
 - **Valeur** : La clé générée à l'étape 4
 - Cliquez sur **"Add"**
 
-#### Variable 2 : ANTHROPIC_API_KEY
+#### Variable 2 : MISTRAL_API_KEY
 
-- **Nom** : `ANTHROPIC_API_KEY`
-- **Valeur** : La clé API Anthropic copiée à l'étape 2
+- **Nom** : `MISTRAL_API_KEY`
+- **Valeur** : La clé API Mistral AI copiée à l'étape 2
 - Cliquez sur **"Add"**
 
 #### Variable 3 : RUNPOD_API_KEY
@@ -134,10 +127,9 @@ Dans Railway, dans l'onglet "Variables", vous devriez voir :
 
 ```
 ✅ SECRET_KEY
-✅ ANTHROPIC_API_KEY
+✅ MISTRAL_API_KEY
 ✅ RUNPOD_API_KEY
 ✅ RUNPOD_ENDPOINT_ID
-✅ MISTRAL_API_KEY
 ✅ FLASK_DEBUG=False          (recommandé)
 ✅ ALLOWED_ORIGINS=...        (recommandé)
 ```
@@ -205,10 +197,9 @@ Pour vérifier que RunPod fonctionne, vous pouvez utiliser le script de test dan
 | Variable | Où l'obtenir | Format exemple |
 |----------|--------------|----------------|
 | `SECRET_KEY` | Générée localement | `a1b2c3d4e5f6...` (64 caractères) |
-| `ANTHROPIC_API_KEY` | console.anthropic.com | `sk-ant-...` |
+| `MISTRAL_API_KEY` | console.mistral.ai | `sk-mistral-...` |
 | `RUNPOD_API_KEY` | runpod.io/console/user/settings | `...` |
 | `RUNPOD_ENDPOINT_ID` | runpod.io/console/serverless | `abc123def456` |
-| `MISTRAL_API_KEY` | console.mistral.ai | `...` |
 | `FLASK_DEBUG` | Configuration locale | `False` (production) |
 | `ALLOWED_ORIGINS` | Configuration locale | `https://app.railway.app,https://www.domaine.com` |
 

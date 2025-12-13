@@ -1,5 +1,5 @@
 """
-Service de traitement LLM avec Mistral AI (remplace Anthropic/Claude)
+Service de traitement LLM avec Mistral AI
 Mapping des locuteurs (Hybride Spacy + Mistral Small), génération pré-CR (Mistral Large)
 """
 import json

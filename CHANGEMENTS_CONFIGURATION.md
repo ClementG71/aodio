@@ -86,7 +86,7 @@ Vérifiez que vous avez ces variables dans Railway :
 
 ```
 ✅ SECRET_KEY
-✅ ANTHROPIC_API_KEY
+✅ MISTRAL_API_KEY
 ✅ RUNPOD_API_KEY
 ✅ RUNPOD_ENDPOINT_ID
 ✅ MISTRAL_API_KEY
@@ -143,7 +143,7 @@ Après le déploiement, vérifiez les logs Railway :
 1. **Vérifiez vos variables existantes** :
    ```
    SECRET_KEY
-   ANTHROPIC_API_KEY
+   MISTRAL_API_KEY
    RUNPOD_API_KEY
    RUNPOD_ENDPOINT_ID
    MISTRAL_API_KEY
@@ -173,8 +173,8 @@ FLASK_DEBUG=False
 # CORS (sécurité)
 ALLOWED_ORIGINS=https://aodio.railway.app,https://www.aodio.fr
 
-# API Anthropic (Claude)
-ANTHROPIC_API_KEY=sk-ant-...
+# API Mistral AI (LLM)
+MISTRAL_API_KEY=sk-mistral-...
 
 # RunPod
 RUNPOD_API_KEY=...
@@ -246,7 +246,7 @@ ALLOWED_ORIGINS=https://aodio.railway.app,https://api.runpod.ai
 **Solution**:
 1. Vérifiez que toutes les variables obligatoires sont présentes :
    - `SECRET_KEY`
-   - `ANTHROPIC_API_KEY`
+   - `MISTRAL_API_KEY`
    - `RUNPOD_API_KEY`
    - `RUNPOD_ENDPOINT_ID`
    - `MISTRAL_API_KEY`

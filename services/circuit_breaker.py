@@ -264,12 +264,6 @@ mistral_breaker = CircuitBreaker(
     recovery_timeout=60.0
 )
 
-anthropic_breaker = CircuitBreaker(
-    name="anthropic_api", 
-    failure_threshold=3,
-    recovery_timeout=60.0
-)
-
 runpod_breaker = CircuitBreaker(
     name="runpod_api",
     failure_threshold=3,

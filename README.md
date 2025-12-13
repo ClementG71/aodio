@@ -7,7 +7,7 @@ Application de transcription audio et préparation de comptes rendus de réunion
 - **Upload et traitement audio** : Normalisation et compression des fichiers audio
 - **Diarisation** : Identification des locuteurs avec Pyannote 4.0.1
 - **Transcription** : Transcription verbatim avec Voxtral-small-latest
-- **Traitement LLM** : Mapping des locuteurs, génération de pré-compte rendu, extraction des décisions avec Claude Sonnet 4.5
+- **Traitement LLM** : Mapping des locuteurs, génération de pré-compte rendu, extraction des décisions avec Mistral AI
 - **Génération de documents** : Création de documents en formats TXT, DOCX et PDF
 - **Historique** : Suivi de tous les traitements effectués
 - **Interface web** : Interface Flask avec Tailwind CSS
@@ -16,7 +16,7 @@ Application de transcription audio et préparation de comptes rendus de réunion
 
 - **Frontend** : Flask avec Tailwind CSS (hébergé sur Railway)
 - **Traitement audio** : Pyannote 4.0.1 (via RunPod) et Voxtral-small-latest
-- **LLM** : Claude Sonnet 4.5 (Anthropic)
+- **LLM** : Mistral AI (Mistral Small et Large)
 - **Génération de documents** : python-docx, reportlab
 
 ## Installation
@@ -26,7 +26,7 @@ Application de transcription audio et préparation de comptes rendus de réunion
 - Python 3.9+
 - FFmpeg (pour le traitement audio)
 - Clés API :
-  - Anthropic (Claude)
+  - Mistral AI (LLM)
   - RunPod
   - Voxtral (si utilisé directement)
 
@@ -76,7 +76,7 @@ Créer un fichier `.env` avec les variables suivantes :
 
 ```env
 SECRET_KEY=your-secret-key-here
-ANTHROPIC_API_KEY=your-anthropic-api-key
+MISTRAL_API_KEY=your-mistral-api-key
 RUNPOD_API_KEY=your-runpod-api-key
 RUNPOD_ENDPOINT_ID=your-runpod-endpoint-id
 MISTRAL_API_KEY=your-mistral-api-key
@@ -113,7 +113,7 @@ L'application utilise une architecture hybride optimisée :
    - Normalisation et compression de l'audio
    - Diarisation avec Pyannote
    - Transcription avec Voxtral
-   - Mapping des locuteurs avec Claude
+   - Mapping des locuteurs avec Mistral AI
    - Génération du pré-compte rendu
    - Extraction des décisions
 3. **Téléchargement** : Télécharger les documents générés (Minutes, Pré-CR, Relevé des décisions)
@@ -153,7 +153,7 @@ aodio/
 
 ## Limitations et optimisations
 
-- **Limite de tokens** : Les appels API sont limités pour éviter la surcharge (100k tokens par appel pour Voxtral, 4k tokens pour Claude)
+- **Limite de tokens** : Les appels API sont limités pour éviter la surcharge (100k tokens par appel pour Voxtral, 4k tokens pour Mistral Small, 8k tokens pour Mistral Large)
 - **Traitement par batch** : La transcription est effectuée par batches de segments pour optimiser les appels API
 - **Taille de fichier** : Limite de 500 MB par fichier audio
 

@@ -7,7 +7,6 @@ Werkzeug>=3.0.0
 python-dotenv>=1.0.0
 
 # APIs LLM
-anthropic>=0.18.0
 mistralai>=1.0.0
 
 # Traitement audio
