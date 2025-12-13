@@ -71,29 +71,74 @@ def create_app():
     else:
         app_base_url = os.getenv('APP_BASE_URL', 'http://localhost:5000')
     
-    # Initialiser les services RunPod et Mistral
+    # Initialiser les services RunPod et Mistral avec logging détaillé
     runpod_worker = None
     mistral_client = None
     mistral_processor = None
     
+    logger.info("Initialisation des services - Configuration actuelle:")
+    logger.info(f"  RUNPOD_API_KEY: {'***' if app.config.get('RUNPOD_API_KEY') else 'Non défini'}")
+    logger.info(f"  RUNPOD_ENDPOINT_ID: {'***' if app.config.get('RUNPOD_ENDPOINT_ID') else 'Non défini'}")
+    logger.info(f"  MISTRAL_API_KEY: {'***' if app.config.get('MISTRAL_API_KEY') else 'Non défini'}")
+    
     if app.config.get('RUNPOD_API_KEY') and app.config.get('RUNPOD_ENDPOINT_ID'):
-        runpod_worker = RunPodWorker(
-            api_key=app.config['RUNPOD_API_KEY'],
-            endpoint_id=app.config['RUNPOD_ENDPOINT_ID'],
-            base_url=app_base_url
-        )
+        try:
+            runpod_worker = RunPodWorker(
+                api_key=app.config['RUNPOD_API_KEY'],
+                endpoint_id=app.config['RUNPOD_ENDPOINT_ID'],
+                base_url=app_base_url
+            )
+            logger.info("RunPod Worker initialisé avec succès")
+        except Exception as e:
+            logger.error(f"Échec de l'initialisation de RunPod Worker: {str(e)}", exc_info=True)
+    else:
+        logger.warning("RunPod non initialisé - clés API manquantes")
     
     if app.config.get('MISTRAL_API_KEY'):
-        mistral_client = MistralVoxtralClient(api_key=app.config['MISTRAL_API_KEY'])
-        mistral_processor = MistralProcessor(api_key=app.config['MISTRAL_API_KEY'])
+        try:
+            mistral_client = MistralVoxtralClient(api_key=app.config['MISTRAL_API_KEY'])
+            logger.info("Mistral Voxtral Client initialisé avec succès")
+            
+            mistral_processor = MistralProcessor(api_key=app.config['MISTRAL_API_KEY'])
+            logger.info("Mistral Processor initialisé avec succès")
+        except Exception as e:
+            logger.error(f"Échec de l'initialisation de Mistral: {str(e)}", exc_info=True)
+    else:
+        logger.warning("Mistral non initialisé - clé API manquante")
     
     document_generator = DocumentGenerator()
+    logger.info("Document Generator initialisé avec succès")
     
     # Initialiser les orchestrateurs
     audio_orchestrator = AudioPipelineOrchestrator(audio_processor, log_manager)
+    logger.info("Audio Orchestrator initialisé avec succès")
     
-    # Vérifier que tous les services nécessaires sont disponibles
-    if not all([runpod_worker, mistral_client, mistral_processor]):
+    # Vérifier que tous les services nécessaires sont disponibles pour le pipeline complet
+    all_services_available = all([runpod_worker, mistral_client, mistral_processor])
+    logger.info(f"Tous les services disponibles pour pipeline complet: {all_services_available}")
+    
+    if all_services_available:
+        try:
+            pipeline_orchestrator = PipelineOrchestrator(
+                audio_processor=audio_processor,
+                diarization_service=runpod_worker,
+                transcription_service=mistral_client,
+                llm_speaker_mapper=mistral_processor,
+                document_generator=document_generator,
+                log_manager=log_manager,
+=======
+            pipeline_orchestrator = PipelineOrchestrator(
+                audio_processor=audio_processor,
+                diarization_service=runpod_worker,
+                transcription_service=mistral_client,
+                llm_speaker_mapper=mistral_processor,
+                document_generator=document_generator,
+                log_manager=log_manager
+            )
+            logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
+        except Exception as e:
+            logger.error(f"Échec de l'initialisation du Pipeline Orchestrator: {str(e)}", exc_info=True)
+    else:
         missing_services = []
         if not runpod_worker:
             missing_services.append("RunPod")
@@ -102,17 +147,8 @@ def create_app():
         if not mistral_processor:
             missing_services.append("Mistral Processor")
         
+        logger.warning(f"Pipeline Orchestrator non initialisé - services manquants: {', '.join(missing_services)}")
         logger.warning(f"Services manquants: {', '.join(missing_services)}. Certaines fonctionnalités seront limitées.")
-    else:
-        pipeline_orchestrator = PipelineOrchestrator(
-            audio_processor=audio_processor,
-            diarization_service=runpod_worker,
-            transcription_service=mistral_client,
-            llm_speaker_mapper=mistral_processor,
-            document_generator=document_generator,
-            log_manager=log_manager,
-            app_base_url=app_base_url
-        )
     
     # Handler pour les fichiers trop volumineux
     @app.errorhandler(RequestEntityTooLarge)
@@ -567,10 +603,36 @@ def create_app():
             audio_orchestrator.process_audio_and_pipeline(session_id, metadata, audio_path)
             
             # Si tous les services sont disponibles, lancer le pipeline complet
+            # Vérification détaillée des services avec logging
+            services_status = {
+                'pipeline_orchestrator_in_globals': 'pipeline_orchestrator' in globals(),
+                'runpod_worker': runpod_worker is not None,
+                'mistral_client': mistral_client is not None,
+                'mistral_processor': mistral_processor is not None,
+                'audio_orchestrator': audio_orchestrator is not None,
+                'document_generator': document_generator is not None,
+                'log_manager': log_manager is not None
+            }
+            
+            logger.info(f"Statut des services pour la session {session_id}: {services_status}")
+            
+            # Vérification des clés API
+            api_keys_status = {
+                'RUNPOD_API_KEY': bool(app.config.get('RUNPOD_API_KEY')),
+                'RUNPOD_ENDPOINT_ID': bool(app.config.get('RUNPOD_ENDPOINT_ID')),
+                'MISTRAL_API_KEY': bool(app.config.get('MISTRAL_API_KEY'))
+            }
+            logger.info(f"Clés API disponibles: {api_keys_status}")
+            
             if 'pipeline_orchestrator' in globals():
+                logger.info(f"Lancement du pipeline complet pour la session {session_id}")
                 pipeline_orchestrator.process_audio_pipeline(session_id, metadata)
             else:
-                logger.warning("Pipeline complet non disponible - certains services manquants")
+                logger.warning("Pipeline complet non disponible - détails: " + 
+                              f"pipeline_orchestrator_in_globals={services_status['pipeline_orchestrator_in_globals']}, " +
+                              f"runpod_worker={services_status['runpod_worker']}, " +
+                              f"mistral_client={services_status['mistral_client']}, " +
+                              f"mistral_processor={services_status['mistral_processor']}")
                 log_manager.log_status(session_id, 'warning', 'Pipeline complet non disponible - certains services manquants')
                 
         except Exception as e:
