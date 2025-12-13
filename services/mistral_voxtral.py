@@ -14,6 +14,7 @@ import time
 import base64
 from pathlib import Path
 from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, Optional
 from mistralai import Mistral
 from mistralai.models import SDKError
 
