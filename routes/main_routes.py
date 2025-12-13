@@ -47,6 +47,18 @@ def create_app():
     app.config['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY')
     app.config['MISTRAL_ENDPOINT'] = os.getenv('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1')
     
+    # Configuration explicite du dossier des templates pour éviter les problèmes de chemin
+    templates_path = os.path.join(os.getcwd(), 'templates')
+    if os.path.exists(templates_path):
+        app.template_folder = templates_path
+        logger.info(f"Template folder configuré: {app.template_folder}")
+        logger.info(f"Fichiers disponibles: {os.listdir(app.template_folder)}")
+    else:
+        logger.error(f"Dossier templates introuvable: {templates_path}")
+        # Créer un loader de fallback
+        from jinja2 import FileSystemLoader
+        app.jinja_loader = FileSystemLoader(searchpath=os.getcwd())
+    
     # Initialisation des services
     audio_processor = AudioProcessor()
     log_manager = LogManager(LOGS_FOLDER)
