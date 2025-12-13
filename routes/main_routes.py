@@ -125,7 +125,8 @@ def create_app():
                 transcription_service=mistral_client,
                 llm_speaker_mapper=mistral_processor,
                 document_generator=document_generator,
-                log_manager=log_manager
+                log_manager=log_manager,
+                app_base_url=app_base_url
             )
             logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
         except Exception as e:
@@ -138,7 +139,8 @@ def create_app():
                 transcription_service=mistral_client,
                 llm_speaker_mapper=mistral_processor,
                 document_generator=document_generator,
-                log_manager=log_manager
+                log_manager=log_manager,
+                app_base_url=app_base_url
             )
             logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
         except Exception as e:
