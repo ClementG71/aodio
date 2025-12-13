@@ -3,6 +3,7 @@ Routes principales de l'application Flask
 """
 import os
 import json
+import sys
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -188,15 +189,79 @@ def create_app():
     @app.route('/')
     def index():
         """Page d'accueil avec formulaire d'upload"""
-        return render_template('index.html')
+        try:
+            logger.info("Tentative de rendu du template index.html")
+            logger.info(f"Dossier des templates: {app.template_folder}")
+            logger.info(f"Fichiers dans templates: {os.listdir(app.template_folder) if os.path.exists(app.template_folder) else 'Dossier introuvable'}")
+            
+            # Vérifier les variables d'environnement critiques
+            missing_env_vars = []
+            required_vars = ['SECRET_KEY', 'UPLOAD_FOLDER', 'PROCESSED_FOLDER']
+            for var in required_vars:
+                if not os.getenv(var):
+                    missing_env_vars.append(var)
+            
+            if missing_env_vars:
+                logger.warning(f"Variables d'environnement manquantes: {', '.join(missing_env_vars)}")
+            
+            # Vérifier que les dossiers nécessaires existent
+            folders_to_check = [UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER]
+            for folder in folders_to_check:
+                if not os.path.exists(folder):
+                    logger.error(f"Dossier manquant: {folder}")
+                else:
+                    logger.info(f"Dossier vérifié: {folder}")
+            
+            return render_template('index.html')
+            
+        except Exception as e:
+            logger.error(f"Erreur critique lors du rendu du template index.html: {str(e)}", exc_info=True)
+            logger.error(f"Type d'erreur: {type(e).__name__}")
+            logger.error(f"Dossier de travail actuel: {os.getcwd()}")
+            logger.error(f"Contenu du dossier actuel: {os.listdir()}")
+            return f"Erreur interne du serveur: {str(e)}", 500
     
     @app.route('/health')
     def health():
         """Route de santé pour vérifier que l'application fonctionne"""
-        return jsonify({
-            'status': 'ok',
-            'message': 'Application Aodio is running'
-        }), 200
+        try:
+            health_info = {
+                'status': 'ok',
+                'message': 'Application Aodio is running',
+                'timestamp': datetime.now().isoformat(),
+                'environment': {
+                    'FLASK_ENV': os.getenv('FLASK_ENV', 'production'),
+                    'RAILWAY_ENVIRONMENT': os.getenv('RAILWAY_ENVIRONMENT', 'local'),
+                    'PYTHON_VERSION': f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}"
+                },
+                'folders': {
+                    'upload_folder': UPLOAD_FOLDER,
+                    'upload_exists': os.path.exists(UPLOAD_FOLDER),
+                    'processed_folder': PROCESSED_FOLDER,
+                    'processed_exists': os.path.exists(PROCESSED_FOLDER),
+                    'logs_folder': LOGS_FOLDER,
+                    'logs_exists': os.path.exists(LOGS_FOLDER),
+                    'template_folder': app.template_folder,
+                    'template_exists': os.path.exists(app.template_folder)
+                },
+                'services': {
+                    'runpod_available': bool(app.config.get('RUNPOD_API_KEY')),
+                    'mistral_available': bool(app.config.get('MISTRAL_API_KEY')),
+                    'audio_processor': 'initialized',
+                    'log_manager': 'initialized'
+                }
+            }
+            
+            logger.info("Health check successful")
+            return jsonify(health_info), 200
+            
+        except Exception as e:
+            logger.error(f"Health check failed: {str(e)}", exc_info=True)
+            return jsonify({
+                'status': 'error',
+                'message': f'Health check failed: {str(e)}',
+                'error_type': type(e).__name__
+            }), 500
     
     @app.route('/files/<session_id>/<filename>', methods=['GET', 'HEAD', 'OPTIONS'])
     def serve_file(session_id, filename):
