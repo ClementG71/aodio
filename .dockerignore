@@ -48,8 +48,9 @@ tests/
 .coverage
 htmlcov/
 
-# Fichiers de dépendances
-requirements*.txt
+# Fichiers de dépendances (ne pas ignorer requirements.txt pour le build)
+# requirements-dev.txt
+# requirements-worker.txt
 
 # Fichiers de configuration
 *.yml
