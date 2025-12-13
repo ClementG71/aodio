@@ -117,6 +117,18 @@ def create_app():
     all_services_available = all([runpod_worker, mistral_client, mistral_processor])
     logger.info(f"Tous les services disponibles pour pipeline complet: {all_services_available}")
     
+            pipeline_orchestrator = PipelineOrchestrator(
+                audio_processor=audio_processor,
+                diarization_service=runpod_worker,
+                transcription_service=mistral_client,
+                llm_speaker_mapper=mistral_processor,
+                document_generator=document_generator,
+                log_manager=log_manager
+            )
+            logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
+        except Exception as e:
+            logger.error(f"Échec de l'initialisation du Pipeline Orchestrator: {str(e)}", exc_info=True)
+=======
     if all_services_available:
         try:
             pipeline_orchestrator = PipelineOrchestrator(
@@ -125,7 +137,11 @@ def create_app():
                 transcription_service=mistral_client,
                 llm_speaker_mapper=mistral_processor,
                 document_generator=document_generator,
-                log_manager=log_manager,
+                log_manager=log_manager
+            )
+            logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
+        except Exception as e:
+            logger.error(f"Échec de l'initialisation du Pipeline Orchestrator: {str(e)}", exc_info=True)
 =======
             pipeline_orchestrator = PipelineOrchestrator(
                 audio_processor=audio_processor,
