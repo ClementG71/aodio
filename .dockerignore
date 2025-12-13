@@ -1,0 +1,71 @@
+# Ignorer les fichiers sensibles et inutiles pour le build
+.env
+.env.local
+.env.*
+*.pyc
+__pycache__/
+*.pyo
+*.pyd
+.Python
+.env
+.venv
+venv
+.environment
+.idea/
+.vscode/
+.DS_Store
+*.sqlite3
+*.db
+*.log
+*.csv
+
+# Dossiers de développement
+node_modules/
+
+# Fichiers de configuration locaux
+env.example
+
+# Dossiers de données
+uploads/
+processed/
+logs/
+
+# Fichiers de build
+build/
+dist/
+
+# Fichiers de documentation
+docs/
+
+# Fichiers de test
+tests/
+
+# Fichiers de cache
+.cache/
+*.cache
+
+# Fichiers de coverage
+.coverage
+htmlcov/
+
+# Fichiers de dépendances
+requirements*.txt
+
+# Fichiers de configuration
+*.yml
+*.yaml
+*.json
+
+# Fichiers de secrets
+secrets/
+*.secret
+*.key
+
+# Fichiers de backup
+*.bak
+*.backup
+
+# Fichiers temporaires
+*.tmp
+*.swp
+*.swo
