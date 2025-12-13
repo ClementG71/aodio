@@ -14,17 +14,28 @@ class TranscriptionAligner:
     """Aligne et distribue le texte de transcription avec les segments de diarisation"""
     
     def __init__(self):
-        """Initialise l'aligner avec Spacy"""
-        try:
-            self.nlp = spacy.load("fr_core_news_lg")
-            logger.info("Modèle Spacy chargé pour l'alignement")
-        except OSError:
-            logger.warning("Modèle 'fr_core_news_lg' non trouvé, essai avec 'fr_core_news_md' ou fallback basique")
+        """Initialise l'aligner - chargement lazy du modèle Spacy"""
+        self._nlp = None
+        self._model_loaded = False
+        logger.info("TranscriptionAligner initialisé - modèle Spacy sera chargé à la première utilisation")
+    
+    def _get_nlp(self):
+        """Charge le modèle Spacy de manière lazy (thread-safe)"""
+        if self._model_loaded:
+            return self._nlp
+        
+        # Double-checked locking pattern pour thread-safety
+        if self._nlp is None:
             try:
-                self.nlp = spacy.load("fr_core_news_md")
-            except:
-                self.nlp = None
-                logger.warning("Aucun modèle Spacy trouvé, alignement purement statistique")
+                self._nlp = spacy.load("fr_core_news_md")  # Utilisation de md au lieu de lg
+                self._model_loaded = True
+                logger.info("Modèle Spacy 'fr_core_news_md' chargé pour l'alignement")
+            except OSError:
+                logger.warning("Modèle 'fr_core_news_md' non trouvé, alignement purement statistique")
+                self._nlp = None
+                self._model_loaded = True
+        
+        return self._nlp
     
     def calculate_optimal_offset(self, transcriptions: List[Dict[str, Any]], 
                                  diarization_segments: List[Dict[str, Any]]) -> float:
@@ -158,7 +169,8 @@ class TranscriptionAligner:
             aligned_source.append(t_copy)
             
         # 3. Alignement avec Spacy (Sentence-Level)
-        if self.nlp:
+        nlp = self._get_nlp()
+        if nlp:
             return self._align_with_spacy(aligned_source, diarization_segments)
         else:
             return self._align_statistical(aligned_source, diarization_segments)
@@ -182,7 +194,8 @@ class TranscriptionAligner:
             if t_duration <= 0: continue
             
             # Analyser le segment avec Spacy
-            doc = self.nlp(text)
+            nlp = self._get_nlp()
+            doc = nlp(text)
             sentences = list(doc.sents)
             
             if not sentences: # Cas rare, traiter comme un bloc

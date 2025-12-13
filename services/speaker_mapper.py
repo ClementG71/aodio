@@ -16,20 +16,36 @@ class SpeakerMapper:
     """
     
     def __init__(self):
-        """Initialise le modèle Spacy"""
-        try:
-            # Charger le modèle français large pour une meilleure précision NER
-            self.nlp = spacy.load("fr_core_news_lg")
-            logger.info("Modèle Spacy 'fr_core_news_lg' chargé avec succès")
-        except OSError:
-            logger.warning("Modèle Spacy 'fr_core_news_lg' non trouvé. Tentative de téléchargement...")
+        """Initialise le modèle Spacy - chargement lazy"""
+        self._nlp = None
+        self._model_loaded = False
+        logger.info("SpeakerMapper initialisé - modèle Spacy sera chargé à la première utilisation")
+    
+    def _get_nlp(self):
+        """Charge le modèle Spacy de manière lazy (thread-safe)"""
+        if self._model_loaded:
+            return self._nlp
+        
+        # Double-checked locking pattern pour thread-safety
+        if self._nlp is None:
             try:
-                from spacy.cli import download
-                download("fr_core_news_lg")
-                self.nlp = spacy.load("fr_core_news_lg")
-            except Exception as e:
-                logger.error(f"Impossible de charger Spacy: {e}")
-                self.nlp = None
+                # Utilisation de md au lieu de lg pour économiser de la mémoire
+                self._nlp = spacy.load("fr_core_news_md")
+                self._model_loaded = True
+                logger.info("Modèle Spacy 'fr_core_news_md' chargé avec succès")
+            except OSError:
+                logger.warning("Modèle Spacy 'fr_core_news_md' non trouvé. Tentative de téléchargement...")
+                try:
+                    from spacy.cli import download
+                    download("fr_core_news_md")
+                    self._nlp = spacy.load("fr_core_news_md")
+                    self._model_loaded = True
+                except Exception as e:
+                    logger.error(f"Impossible de charger Spacy: {e}")
+                    self._nlp = None
+                    self._model_loaded = True
+        
+        return self._nlp
 
     def identify_speakers(self, 
                          transcription_segments: List[Dict[str, Any]], 
@@ -46,7 +62,8 @@ class SpeakerMapper:
             - Dict[str, str]: Mapping validé {SPEAKER_XX: "Nom Réel"}
             - List[str]: Liste des SPEAKER_XX ambigus nécessitant un fallback LLM
         """
-        if not self.nlp or not participants_list:
+        nlp = self._get_nlp()
+        if not nlp or not participants_list:
             logger.warning("Spacy non initialisé ou liste participants vide. Mapping impossible.")
             return {}, list(set(s.get('speaker') for s in transcription_segments if s.get('speaker')))
 
@@ -71,7 +88,7 @@ class SpeakerMapper:
             if not text or not current_speaker:
                 continue
                 
-            doc = self.nlp(text)
+            doc = nlp(text)
             
             # A. Vérification de la file d'attente (Attribution Différée)
             # Si on a des locuteurs attendus et que le speaker change
@@ -89,7 +106,7 @@ class SpeakerMapper:
                     # 2. Similarité sémantique avec l'annonce (Sujet)
                     # On compare les 2 premières phrases du speaker avec l'annonce
                     intro_text = " ".join([s.text for s in list(doc.sents)[:2]])
-                    intro_doc = self.nlp(intro_text)
+                    intro_doc = nlp(intro_text)
                     similarity = intro_doc.similarity(announcement_doc) if announcement_doc.vector_norm else 0
                     
                     logger.info(f"Check différé: {candidate_name} pour {current_speaker} ? Intro={is_intro}, Sim={similarity:.2f}")
@@ -192,7 +209,7 @@ class SpeakerMapper:
     def _has_intro_markers(self, text: str) -> bool:
         """Vérifie si le texte commence par des marqueurs d'introduction"""
         intro_markers = ["bonjour", "merci", "alors", "donc", "tout d'abord", "pour commencer"]
-        doc = self.nlp(text[:100].lower())
+        doc = nlp(text[:100].lower())
         # Vérifier les 3 premiers mots
         for token in list(doc)[:5]:
             if token.text in intro_markers:
