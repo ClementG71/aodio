@@ -491,7 +491,10 @@ def create_app():
                 logger.warning(f"secure_filename a modifié les valeurs: session_id={session_id}->{safe_session_id}, filename={filename}->{safe_filename}")
                 return jsonify({'error': 'Nom de fichier ou session invalide'}), 400
             
-            file_path = Path(UPLOAD_FOLDER) / safe_session_id / safe_filename
+            # Utiliser un chemin absolu pour éviter les problèmes de chemin relatif
+            # Le dossier uploads est à la racine du projet, pas dans routes/
+            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            file_path = upload_folder_abs / safe_session_id / safe_filename
             
             if not file_path.exists():
                 logger.warning(f"Fichier introuvable: {file_path}")
@@ -536,7 +539,9 @@ def create_app():
             session_id = str(uuid.uuid4())
             session['processing_id'] = session_id
             
-            session_folder = Path(UPLOAD_FOLDER) / session_id
+            # Utiliser un chemin absolu pour le dossier de session
+            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            session_folder = upload_folder_abs / session_id
             session_folder.mkdir(exist_ok=True)
             
             audio_file = request.files.get('audio_file')
@@ -660,7 +665,9 @@ def create_app():
     def download_document(session_id, document_type):
         """Télécharge un document généré"""
         try:
-            metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
+            # Utiliser un chemin absolu pour le metadata
+            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            metadata_path = upload_folder_abs / session_id / 'metadata.json'
             if not metadata_path.exists():
                 return jsonify({'error': 'Session introuvable'}), 404
             
