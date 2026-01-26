@@ -80,16 +80,22 @@
         <!-- Zone de statut -->
         <div id="statusArea" class="mt-6 hidden">
             <div class="bg-blue-50 border border-blue-200 rounded-md p-4">
-                <div class="flex items-center">
-                    <div class="flex-shrink-0">
-                        <div class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                <div class="flex items-center justify-between">
+                    <div class="flex items-center">
+                        <div class="flex-shrink-0">
+                            <div id="statusSpinner" class="animate-spin rounded-full h-5 w-5 border-b-2 border-primary"></div>
+                        </div>
+                        <div class="ml-3">
+                            <p class="text-sm font-medium text-blue-800" id="statusMessage">
+                                Traitement en cours...
+                            </p>
+                            <p class="text-xs text-blue-600 mt-1" id="statusDetails"></p>
+                        </div>
                     </div>
-                    <div class="ml-3">
-                        <p class="text-sm font-medium text-blue-800" id="statusMessage">
-                            Traitement en cours...
-                        </p>
-                        <p class="text-xs text-blue-600 mt-1" id="statusDetails"></p>
-                    </div>
+                    <button id="cancelBtn" 
+                            class="ml-4 px-4 py-2 bg-red-600 text-white text-sm font-medium rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        ⛔ Annuler
+                    </button>
                 </div>
             </div>
         </div>
@@ -101,12 +107,105 @@
                 <div class="space-y-2" id="downloadLinks"></div>
             </div>
         </div>
+
+        <!-- Zone d'annulation -->
+        <div id="cancelledArea" class="mt-6 hidden">
+            <div class="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+                <div class="flex items-center">
+                    <div class="flex-shrink-0">
+                        <svg class="h-5 w-5 text-yellow-600" fill="currentColor" viewBox="0 0 20 20">
+                            <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+                        </svg>
+                    </div>
+                    <div class="ml-3">
+                        <p class="text-sm font-medium text-yellow-800">
+                            Traitement annulé
+                        </p>
+                        <p class="text-xs text-yellow-600 mt-1" id="cancelledDetails">
+                            Le traitement a été arrêté. Vous pouvez démarrer un nouveau traitement.
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </div>
     </div>
 </div>
 {% endblock %}
 
 {% block scripts %}
 <script>
+let currentSessionId = null;
+let pollInterval = null;
+
+// Fonction pour annuler le traitement
+async function cancelProcessing() {
+    if (!currentSessionId) {
+        return;
+    }
+    
+    const cancelBtn = document.getElementById('cancelBtn');
+    const statusMessage = document.getElementById('statusMessage');
+    const statusDetails = document.getElementById('statusDetails');
+    const statusSpinner = document.getElementById('statusSpinner');
+    
+    // Désactiver le bouton pendant l'annulation
+    cancelBtn.disabled = true;
+    cancelBtn.textContent = 'Annulation...';
+    statusMessage.textContent = 'Annulation en cours...';
+    
+    try {
+        const response = await fetch(`/cancel/${currentSessionId}`, {
+            method: 'POST'
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            // Arrêter le polling
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+            
+            // Masquer le spinner
+            statusSpinner.classList.add('hidden');
+            
+            // Afficher le message d'annulation
+            statusMessage.textContent = 'Traitement annulé';
+            statusDetails.textContent = data.message || 'Le traitement a été arrêté avec succès.';
+            
+            // Changer le style de la zone de statut
+            const statusArea = document.getElementById('statusArea');
+            statusArea.classList.remove('bg-blue-50', 'border-blue-200');
+            statusArea.classList.add('bg-yellow-50', 'border-yellow-200');
+            
+            // Masquer le bouton d'annulation
+            cancelBtn.classList.add('hidden');
+            
+            // Réactiver le bouton de soumission
+            const submitBtn = document.getElementById('submitBtn');
+            submitBtn.disabled = false;
+            submitBtn.textContent = 'Démarrer le traitement';
+            
+            // Réinitialiser après 3 secondes
+            setTimeout(() => {
+                statusArea.classList.add('hidden');
+                currentSessionId = null;
+            }, 3000);
+        } else {
+            throw new Error(data.error || 'Erreur lors de l\'annulation');
+        }
+    } catch (error) {
+        console.error('Erreur lors de l\'annulation:', error);
+        statusMessage.textContent = 'Erreur lors de l\'annulation: ' + error.message;
+        cancelBtn.disabled = false;
+        cancelBtn.textContent = '⛔ Annuler';
+    }
+}
+
+// Attacher l'événement au bouton d'annulation
+document.getElementById('cancelBtn').addEventListener('click', cancelProcessing);
+
 document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     e.preventDefault();
     
@@ -115,16 +214,30 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
     const statusArea = document.getElementById('statusArea');
     const statusMessage = document.getElementById('statusMessage');
     const statusDetails = document.getElementById('statusDetails');
+    const statusSpinner = document.getElementById('statusSpinner');
     const resultsArea = document.getElementById('resultsArea');
     const downloadLinks = document.getElementById('downloadLinks');
+    const cancelBtn = document.getElementById('cancelBtn');
+    const cancelledArea = document.getElementById('cancelledArea');
+    
+    // Réinitialiser les zones
+    statusArea.classList.remove('bg-red-50', 'border-red-200', 'bg-yellow-50', 'border-yellow-200');
+    statusArea.classList.add('bg-blue-50', 'border-blue-200');
+    statusSpinner.classList.remove('hidden');
+    cancelBtn.classList.remove('hidden');
+    cancelledArea.classList.add('hidden');
+    resultsArea.classList.add('hidden');
     
     // Désactiver le bouton
     submitBtn.disabled = true;
     submitBtn.textContent = 'Traitement en cours...';
     
+    // Activer le bouton d'annulation
+    cancelBtn.disabled = false;
+    cancelBtn.textContent = '⛔ Annuler';
+    
     // Afficher la zone de statut
     statusArea.classList.remove('hidden');
-    resultsArea.classList.add('hidden');
     
     try {
         // Upload
@@ -139,19 +252,21 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
             throw new Error(data.error || 'Erreur lors de l\'upload');
         }
         
-        const sessionId = data.session_id;
+        currentSessionId = data.session_id;
         statusMessage.textContent = 'Fichiers uploadés avec succès. Traitement en cours...';
         
         // Polling du statut
-        const pollInterval = setInterval(async () => {
+        pollInterval = setInterval(async () => {
             try {
-                const statusResponse = await fetch(`/status/${sessionId}`);
+                const statusResponse = await fetch(`/status/${currentSessionId}`);
                 const statusData = await statusResponse.json();
                 
                 if (statusData.status === 'completed') {
                     clearInterval(pollInterval);
+                    pollInterval = null;
                     statusArea.classList.add('hidden');
                     resultsArea.classList.remove('hidden');
+                    cancelBtn.classList.add('hidden');
                     
                     // Génération des liens de téléchargement
                     const documentTypes = [
@@ -167,7 +282,7 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                     ];
                     
                     downloadLinks.innerHTML = documentTypes.map(doc => `
-                        <a href="/download/${sessionId}/${doc.key}" 
+                        <a href="/download/${currentSessionId}/${doc.key}" 
                            class="block bg-white border border-green-300 rounded-md p-3 hover:bg-green-50 text-green-800">
                             📄 ${doc.label}
                         </a>
@@ -175,14 +290,32 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                     
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Démarrer le traitement';
+                    currentSessionId = null;
+                    
+                } else if (statusData.status === 'cancelled') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    statusArea.classList.add('hidden');
+                    cancelledArea.classList.remove('hidden');
+                    cancelBtn.classList.add('hidden');
+                    statusSpinner.classList.add('hidden');
+                    
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Démarrer le traitement';
+                    currentSessionId = null;
                     
                 } else if (statusData.status === 'error') {
                     clearInterval(pollInterval);
+                    pollInterval = null;
                     statusArea.classList.remove('hidden');
+                    statusArea.classList.remove('bg-blue-50', 'border-blue-200');
                     statusArea.classList.add('bg-red-50', 'border-red-200');
                     statusMessage.textContent = 'Erreur: ' + (statusData.message || 'Erreur inconnue');
+                    statusSpinner.classList.add('hidden');
+                    cancelBtn.classList.add('hidden');
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Démarrer le traitement';
+                    currentSessionId = null;
                 } else {
                     // Mise à jour du statut
                     const lastStage = statusData.stages && statusData.stages.length > 0 
@@ -200,10 +333,14 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
         
     } catch (error) {
         statusArea.classList.remove('hidden');
+        statusArea.classList.remove('bg-blue-50', 'border-blue-200');
         statusArea.classList.add('bg-red-50', 'border-red-200');
         statusMessage.textContent = 'Erreur: ' + error.message;
+        statusSpinner.classList.add('hidden');
+        cancelBtn.classList.add('hidden');
         submitBtn.disabled = false;
         submitBtn.textContent = 'Démarrer le traitement';
+        currentSessionId = null;
     }
 });
 </script>
