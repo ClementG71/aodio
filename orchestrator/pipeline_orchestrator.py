@@ -52,14 +52,14 @@ class PipelineOrchestrator:
         self.log_manager = log_manager
         self.app_base_url = app_base_url
         
-    def _run_diarization_with_timeout(self, session_id: str, audio_path: str, timeout: int = 900) -> Dict[str, Any]:
+    def _run_diarization_with_timeout(self, session_id: str, audio_path: str, timeout: int = 1800) -> Dict[str, Any]:
         """
         Exécute la diarisation avec gestion de timeout et fallback
         
         Args:
             session_id: ID de la session
             audio_path: Chemin du fichier audio
-            timeout: Timeout en secondes (15 minutes par défaut)
+            timeout: Timeout en secondes (30 minutes par défaut)
             
         Returns:
             dict: Résultat de la diarisation

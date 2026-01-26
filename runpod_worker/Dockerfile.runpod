@@ -9,13 +9,19 @@ ENV DEBIAN_FRONTEND=noninteractive
 # Permettre le chargement des anciens modèles PyTorch (changement de sécurité dans torch 2.6+)
 ENV TORCH_FORCE_WEIGHTS_ONLY_LOAD=0
 
-# Installer Python 3.11 et dépendances système
+# Installer Python 3.11 et dépendances système complètes pour FFmpeg/TorchCodec
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3-pip \
     ffmpeg \
     libsndfile1 \
+    libavutil-dev \
+    libavcodec-dev \
+    libavformat-dev \
+    libswscale-dev \
+    libavfilter-dev \
+    libavdevice-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/bin/python3

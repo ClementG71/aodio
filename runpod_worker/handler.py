@@ -126,6 +126,9 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     Effectue la diarisation avec Pyannote
     Supporte les paramètres min_speakers et max_speakers
     """
+    import time
+    start_time = time.time()
+    
     load_pipeline()
     params = params or {}
     
@@ -150,14 +153,37 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
         print(f"VRAM utilisée avant: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
         sys.stdout.flush()
     
-    print("Appel du pipeline Pyannote (cela peut prendre plusieurs minutes)...", flush=True)
+    # Vérifier que le fichier audio existe et est accessible
+    if not os.path.exists(audio_path):
+        raise FileNotFoundError(f"Fichier audio introuvable: {audio_path}")
+    
+    file_size = os.path.getsize(audio_path)
+    print(f"Fichier audio vérifié: {file_size / (1024*1024):.2f} MB", flush=True)
     sys.stdout.flush()
     
-    # Pyannote 4.0 : appel standard
-    if inference_options:
-        diarization = pipeline(audio_path, **inference_options)
-    else:
-        diarization = pipeline(audio_path)
+    print("Appel du pipeline Pyannote (cela peut prendre plusieurs minutes pour un fichier de 21 min)...", flush=True)
+    print("Note: L'avertissement torchcodec est normal, Pyannote utilisera soundfile en fallback", flush=True)
+    sys.stdout.flush()
+    
+    # Pyannote 4.0 : appel standard avec gestion d'erreur améliorée
+    try:
+        pipeline_start = time.time()
+        if inference_options:
+            print(f"Options d'inférence: {inference_options}", flush=True)
+            diarization = pipeline(audio_path, **inference_options)
+        else:
+            diarization = pipeline(audio_path)
+        
+        pipeline_duration = time.time() - pipeline_start
+        print(f"Pipeline Pyannote exécuté avec succès en {pipeline_duration:.1f}s", flush=True)
+        sys.stdout.flush()
+    except Exception as e:
+        error_msg = f"Erreur lors de l'exécution du pipeline Pyannote: {str(e)}"
+        print(f"ERROR: {error_msg}", flush=True)
+        import traceback
+        traceback.print_exc()
+        sys.stdout.flush()
+        raise Exception(error_msg)
     
     print("Pipeline terminé, formatage des résultats...", flush=True)
     sys.stdout.flush()
@@ -169,12 +195,19 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     # Formatage des résultats
     # Pyannote 4.0 peut renvoyer des labels différents, on standardise
     segments = []
+    print("Formatage des segments...", flush=True)
+    sys.stdout.flush()
+    
     for turn, _, speaker in diarization.itertracks(yield_label=True):
         segments.append({
             "start": float(turn.start),
             "end": float(turn.end),
             "speaker": str(speaker)
         })
+    
+    total_duration = time.time() - start_time
+    print(f"Diarisation complète terminée en {total_duration:.1f}s, {len(segments)} segments trouvés", flush=True)
+    sys.stdout.flush()
     
     return {"segments": segments}
 

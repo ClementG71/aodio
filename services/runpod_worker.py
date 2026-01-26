@@ -160,7 +160,7 @@ class RunPodWorker:
                     api_url,
                     headers=self.headers,
                     json=payload,
-                    timeout=600  # Augmentation du timeout à 10 minutes pour les cold starts
+                    timeout=1200  # Timeout à 20 minutes pour les fichiers longs (21 min audio = ~5-10 min traitement)
                 )
             
             # Log de la réponse pour debug
@@ -282,7 +282,7 @@ class RunPodWorker:
         return merged_segments
     
     
-    def _wait_for_completion(self, job_id: str, max_wait: int = 3600) -> Dict[str, Any]:
+    def _wait_for_completion(self, job_id: str, max_wait: int = 7200) -> Dict[str, Any]:
         """
         Attend la complétion d'un job RunPod
         
