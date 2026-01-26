@@ -45,8 +45,26 @@ def load_pipeline():
     """
     Charge le pipeline Pyannote de manière lazy (au premier appel)
     """
+    # #region agent log
+    import json
+    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps({"location":"handler.py:load_pipeline:entry","message":"load_pipeline appelé","data":{"pipeline_exists":pipeline is not None},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+    except Exception:
+        pass  # Ignore les erreurs de log en production
+    # #endregion
+    
     global pipeline
     if pipeline is not None:
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:load_pipeline:early_return","message":"Pipeline déjà chargé, retour immédiat","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
         return pipeline
     
     print("Chargement du modèle Pyannote 4.0...")
@@ -76,9 +94,27 @@ def load_pipeline():
         import sys
         sys.stdout.flush()
         
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:load_pipeline:before_from_pretrained","message":"Avant Pipeline.from_pretrained","data":{"model":DIARIZATION_MODEL},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         # Pipeline.from_pretrained peut prendre plusieurs minutes
         # Il télécharge les modèles (segmentation, embedding, clustering)
         pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
+        
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:load_pipeline:after_from_pretrained","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(pipeline).__name__},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
         
         print("Modèle téléchargé, déplacement sur GPU...", flush=True)
         sys.stdout.flush()
@@ -87,7 +123,27 @@ def load_pipeline():
             device = torch.device("cuda")
             print(f"Déplacement du pipeline sur GPU: {device}...", flush=True)
             sys.stdout.flush()
+            
+            # #region agent log
+            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"location":"handler.py:load_pipeline:before_to_device","message":"Avant pipeline.to(device)","data":{"device":str(device),"vram_before":torch.cuda.memory_allocated(0) / 1024**3},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}) + '\n')
+            except Exception:
+                pass
+            # #endregion
+            
             pipeline.to(device)
+            
+            # #region agent log
+            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"location":"handler.py:load_pipeline:after_to_device","message":"pipeline.to(device) terminé","data":{"vram_after":torch.cuda.memory_allocated(0) / 1024**3},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}) + '\n')
+            except Exception:
+                pass
+            # #endregion
+            
             print(f"Pipeline déplacé sur GPU: {device}", flush=True)
             print(f"VRAM après chargement: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
         else:
@@ -96,6 +152,16 @@ def load_pipeline():
         sys.stdout.flush()
         print("Modèle Pyannote chargé avec succès!", flush=True)
         sys.stdout.flush()
+        
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:load_pipeline:success","message":"load_pipeline terminé avec succès","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         return pipeline
     except Exception as e:
         error_msg = f"Erreur lors du chargement du pipeline Pyannote: {str(e)}"
@@ -126,10 +192,39 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     Effectue la diarisation avec Pyannote
     Supporte les paramètres min_speakers et max_speakers
     """
+    # #region agent log
+    import json
+    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps({"location":"handler.py:diarize_audio:entry","message":"diarize_audio appelé","data":{"audio_path":audio_path,"params":params},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     import time
     start_time = time.time()
     
+    # #region agent log
+    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps({"location":"handler.py:diarize_audio:before_load_pipeline","message":"Avant load_pipeline()","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     load_pipeline()
+    
+    # #region agent log
+    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps({"location":"handler.py:diarize_audio:after_load_pipeline","message":"load_pipeline() terminé","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     params = params or {}
     
     # Préparation des options d'inférence
@@ -165,19 +260,57 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     print("Note: L'avertissement torchcodec est normal, Pyannote utilisera soundfile en fallback", flush=True)
     sys.stdout.flush()
     
+    # #region agent log
+    import json
+    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+    try:
+        with open(log_path, 'a') as f:
+            f.write(json.dumps({"location":"handler.py:diarize_audio:before_pipeline_call","message":"Avant appel pipeline()","data":{"audio_path":audio_path,"inference_options":inference_options,"vram_before":torch.cuda.memory_allocated(0) / 1024**3 if torch.cuda.is_available() else 0},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+    except Exception:
+        pass
+    # #endregion
+    
     # Pyannote 4.0 : appel standard avec gestion d'erreur améliorée
     try:
         pipeline_start = time.time()
+        
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:diarize_audio:pipeline_call_start","message":"Appel pipeline() démarré","data":{"timestamp":pipeline_start},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         if inference_options:
             print(f"Options d'inférence: {inference_options}", flush=True)
             diarization = pipeline(audio_path, **inference_options)
         else:
             diarization = pipeline(audio_path)
         
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:diarize_audio:pipeline_call_success","message":"Appel pipeline() terminé","data":{"duration":time.time() - pipeline_start,"vram_after":torch.cuda.memory_allocated(0) / 1024**3 if torch.cuda.is_available() else 0},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         pipeline_duration = time.time() - pipeline_start
         print(f"Pipeline Pyannote exécuté avec succès en {pipeline_duration:.1f}s", flush=True)
         sys.stdout.flush()
     except Exception as e:
+        # #region agent log
+        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        try:
+            with open(log_path, 'a') as f:
+                f.write(json.dumps({"location":"handler.py:diarize_audio:pipeline_call_error","message":"Erreur lors de l'appel pipeline()","data":{"error":str(e),"duration":time.time() - pipeline_start},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+        except Exception:
+            pass
+        # #endregion
+        
         error_msg = f"Erreur lors de l'exécution du pipeline Pyannote: {str(e)}"
         print(f"ERROR: {error_msg}", flush=True)
         import traceback
