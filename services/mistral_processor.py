@@ -10,7 +10,7 @@ from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from services.circuit_breaker import mistral_breaker
-from services.speaker_mapper import SpeakerMapper
+from services.speaker_mapper import SpeakerMapper, EnhancedSpeakerMapper
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +26,7 @@ class MistralProcessor:
         """
         self.client = Mistral(api_key=api_key)
         self.speaker_mapper = SpeakerMapper()
+        self.enhanced_mapper = EnhancedSpeakerMapper()
         
         # Configuration des modèles
         # Mistral Large: Pour les tâches complexes (Résumé, Décisions)
@@ -38,7 +39,7 @@ class MistralProcessor:
                     president_seance: Optional[str] = None) -> Dict[str, str]:
         """
         Mappe les labels SPEAKER_XX vers les noms réels des locuteurs.
-        Utilise une stratégie hybride : Spacy d'abord, puis Mistral Small pour les ambiguïtés.
+        Utilise une stratégie améliorée : Analyse comportementale + LLM enrichi.
         
         Args:
             transcription_result: Résultat de la transcription avec segments
@@ -49,7 +50,7 @@ class MistralProcessor:
             dict: Mapping {SPEAKER_00: "Nom", ...}
         """
         try:
-            logger.info("Démarrage du mapping des locuteurs (Mode Hybride)")
+            logger.info("Démarrage du mapping des locuteurs (Mode Amélioré)")
             
             segments = transcription_result.get('segments', [])
             if not segments:
@@ -67,69 +68,154 @@ class MistralProcessor:
                 except Exception as e:
                     logger.warning(f"Erreur lecture participants: {e}")
             
-            if president_seance:
+            # S'assurer que le président est dans la liste
+            if president_seance and president_seance not in participants:
                 participants.append(president_seance)
-                
-            # 2. Analyse Spacy (Rapide & Gratuite)
-            spacy_mapping, ambiguous_speakers = self.speaker_mapper.identify_speakers(segments, participants)
-            logger.info(f"Spacy a identifié {len(spacy_mapping)} speakers. Ambigus: {len(ambiguous_speakers)}")
             
-            final_mapping = spacy_mapping.copy()
+            if not participants:
+                logger.warning("Aucun participant fourni, mapping impossible")
+                return {}
             
-            # 3. Analyse Fallback LLM (Mistral Small) pour les ambigus
-            if ambiguous_speakers:
-                logger.info(f"Lancement du fallback Mistral Small pour: {ambiguous_speakers}")
-                llm_mapping = self._map_speakers_with_llm(
-                    segments, ambiguous_speakers, participants, president_seance
+            # 2. Analyse comportementale avec EnhancedSpeakerMapper
+            logger.info("Analyse des caractéristiques comportementales des speakers...")
+            speaker_stats = self.enhanced_mapper.analyze_speaker_characteristics(
+                segments, participants, president_seance
+            )
+            
+            # 3. Identification du président en premier (ancrage)
+            president_speaker = None
+            if president_seance:
+                president_speaker = self._identify_president_speaker(
+                    speaker_stats, president_seance
                 )
-                final_mapping.update(llm_mapping)
-                
-            return final_mapping
+                if president_speaker:
+                    logger.info(f"Président identifié: {president_speaker} -> {president_seance}")
+            
+            # 4. Appel LLM enrichi avec toutes les caractéristiques
+            logger.info("Appel LLM enrichi pour identification complète...")
+            llm_mapping = self._map_speakers_with_enhanced_llm(
+                segments, speaker_stats, participants, president_seance, president_speaker
+            )
+            
+            return llm_mapping
             
         except Exception as e:
             logger.error(f"Erreur mapping global: {e}", exc_info=True)
             return {}
 
-    def _map_speakers_with_llm(self, segments: List[Dict], target_speakers: List[str], 
-                              participants: List[str], president: Optional[str]) -> Dict[str, str]:
-        """Utilise Mistral Small pour identifier les speakers ambigus"""
-        mapping = {}
-        
-        # Extraire seulement les segments pertinents pour ces speakers
-        # (Pour économiser des tokens)
-        relevant_text = []
-        for seg in segments:
-            speaker = seg.get('speaker')
-            text = seg.get('text', '')
-            
-            # On prend les segments des speakers cibles ET ceux qui les entourent (contexte)
-            # Simplification: on prend tout pour l'instant si le transcript n'est pas énorme
-            # Pour une optimisation future: fenêtre glissante
-            if speaker in target_speakers or len(relevant_text) < 50: # Limite arbitraire pour l'exemple
-                relevant_text.append(f"{speaker}: {text}")
-        
-        context_text = "\n".join(relevant_text[:200]) # Limite contexte
-        
-        prompt = f"""Tu es un expert en analyse de conversation.
-        
-        CONTEXTE:
-        Voici une liste de participants potentiels: {', '.join(participants)}
-        Président de séance: {president or 'Non spécifié'}
-        
-        TRANSCRIPTION PARTIELLE:
-        {context_text}
-        
-        TÂCHE:
-        Identifie qui sont les locuteurs suivants: {', '.join(target_speakers)}.
-        Utilise les indices contextuels ("La parole est à M. X", "Merci Y", auto-présentation).
-        
-        RÉPONSE (JSON uniquement):
-        {{
-            "SPEAKER_XX": "Nom Identifié",
-            "SPEAKER_YY": "Nom Identifié"
-        }}
-        Si tu ne sais pas, mets "Inconnu".
+    def _identify_president_speaker(self, 
+                                   speaker_stats: Dict[str, Dict[str, Any]], 
+                                   president_name: str) -> Optional[str]:
         """
+        Identifie le speaker qui correspond au président en utilisant les caractéristiques.
+        
+        Args:
+            speaker_stats: Statistiques par speaker
+            president_name: Nom du président
+            
+        Returns:
+            str: ID du speaker (SPEAKER_XX) ou None
+        """
+        if not speaker_stats:
+            return None
+        
+        # Critères pour identifier le président:
+        # 1. Parle en premier (début de réunion)
+        # 2. Donne souvent la parole
+        # 3. Parle relativement beaucoup
+        
+        best_candidate = None
+        best_score = 0
+        
+        for speaker, stats in speaker_stats.items():
+            score = 0
+            
+            # Critère 1: Position temporelle (début = +30 points)
+            if stats.get('position_in_meeting') == 'début':
+                score += 30
+            elif stats.get('first_appearance', float('inf')) < 60:  # Parle dans la première minute
+                score += 20
+            
+            # Critère 2: Donne la parole (chaque fois = +10 points)
+            score += stats.get('gives_floor_count', 0) * 10
+            
+            # Critère 3: Volume de parole (normalisé)
+            duration_pct = stats.get('duration_percentage', 0)
+            if duration_pct > 15:  # Parle plus que la moyenne
+                score += 15
+            
+            if score > best_score:
+                best_score = score
+                best_candidate = speaker
+        
+        # Seuil minimum pour valider
+        if best_score >= 30:
+            return best_candidate
+        
+        return None
+    
+    def _map_speakers_with_enhanced_llm(self, 
+                                       segments: List[Dict], 
+                                       speaker_stats: Dict[str, Dict[str, Any]],
+                                       participants: List[str], 
+                                       president: Optional[str],
+                                       president_speaker: Optional[str]) -> Dict[str, str]:
+        """
+        Utilise Mistral Small avec un prompt enrichi pour identifier tous les speakers.
+        
+        Args:
+            segments: Segments de transcription
+            speaker_stats: Statistiques comportementales par speaker
+            participants: Liste des participants
+            president: Nom du président
+            president_speaker: Speaker identifié comme président (si connu)
+            
+        Returns:
+            dict: Mapping {SPEAKER_XX: "Nom", ...}
+        """
+        # Construire le contexte enrichi
+        context = self.enhanced_mapper.build_llm_context(speaker_stats, participants, president)
+        
+        # Construire le prompt structuré
+        prompt = f"""Tu es un expert en analyse de réunions universitaires.
+
+{context}
+
+TÂCHE:
+Identifie qui est chaque locuteur (SPEAKER_XX) parmi les participants connus.
+
+INDICES IMPORTANTS:
+- Le président de séance parle généralement en premier et donne souvent la parole
+- Les participants qui donnent la parole sont souvent des modérateurs ou le président
+- La position temporelle (début/milieu/fin) peut aider à identifier le président
+- Les noms mentionnés dans les extraits peuvent indiquer qui parle
+
+{"ATTENTION: " + president_speaker + " a été identifié comme le président (" + president + "). Utilise cette information pour identifier les autres." if president_speaker and president else ""}
+
+INSTRUCTIONS:
+1. Analyse les caractéristiques de chaque speaker
+2. Compare avec la liste des participants
+3. Explique ton raisonnement pour chaque identification
+4. Fournis le mapping final avec un niveau de confiance
+
+RÉPONSE (JSON strict, aucun texte avant/après):
+{{
+  "reasoning": {{
+    "SPEAKER_00": "Parle en premier, donne la parole 3 fois, position début -> probablement le président",
+    "SPEAKER_01": "Mentionne 'M. Dupont' dans ses extraits, pose des questions -> probablement participant actif"
+  }},
+  "mapping": {{
+    "SPEAKER_00": "Nom Identifié",
+    "SPEAKER_01": "Nom Identifié"
+  }},
+  "confidence": {{
+    "SPEAKER_00": 0.9,
+    "SPEAKER_01": 0.7
+  }}
+}}
+
+Si tu ne peux pas identifier un speaker avec confiance, mets "Inconnu" dans le mapping et 0.0 dans confidence.
+"""
         
         try:
             with mistral_breaker:
@@ -141,14 +227,61 @@ class MistralProcessor:
                 )
                 
             content = response.choices[0].message.content
-            mapping = json.loads(content)
+            result = json.loads(content)
             
-            # Nettoyage
-            return {k: v for k, v in mapping.items() if v != "Inconnu" and k in target_speakers}
+            # Extraire le mapping
+            mapping = result.get('mapping', {})
+            confidence = result.get('confidence', {})
             
-        except Exception as e:
-            logger.error(f"Erreur fallback LLM: {e}")
+            # Logger le raisonnement pour debug
+            if 'reasoning' in result:
+                logger.info("Raisonnement LLM:")
+                for speaker, reasoning in result['reasoning'].items():
+                    conf = confidence.get(speaker, 0)
+                    logger.info(f"  {speaker}: {reasoning} (confiance: {conf:.2f})")
+            
+            # Filtrer les mappings avec faible confiance (< 0.5)
+            filtered_mapping = {}
+            for speaker, name in mapping.items():
+                if name != "Inconnu" and confidence.get(speaker, 0) >= 0.5:
+                    filtered_mapping[speaker] = name
+                elif name != "Inconnu":
+                    logger.warning(f"Mapping {speaker} -> {name} rejeté (confiance trop faible: {confidence.get(speaker, 0):.2f})")
+            
+            # Forcer le mapping du président si identifié
+            if president_speaker and president:
+                filtered_mapping[president_speaker] = president
+                logger.info(f"Mapping président forcé: {president_speaker} -> {president}")
+            
+            return filtered_mapping
+            
+        except json.JSONDecodeError as e:
+            logger.error(f"Erreur parsing JSON LLM: {e}")
+            if 'content' in locals():
+                logger.error(f"Réponse reçue (premiers 500 caractères): {content[:500]}")
             return {}
+        except Exception as e:
+            logger.error(f"Erreur LLM enrichi: {e}", exc_info=True)
+            return {}
+    
+    def _map_speakers_with_llm(self, segments: List[Dict], target_speakers: List[str], 
+                              participants: List[str], president: Optional[str]) -> Dict[str, str]:
+        """
+        Méthode legacy conservée pour compatibilité.
+        Utilise maintenant la méthode enrichie.
+        """
+        logger.warning("Utilisation de _map_speakers_with_llm (legacy), migration vers _map_speakers_with_enhanced_llm recommandée")
+        
+        # Extraire les stats pour les speakers cibles
+        speaker_stats = self.enhanced_mapper.analyze_speaker_characteristics(
+            [s for s in segments if s.get('speaker') in target_speakers],
+            participants,
+            president
+        )
+        
+        return self._map_speakers_with_enhanced_llm(
+            segments, speaker_stats, participants, president, None
+        )
 
     def generate_pre_compte_rendu(self, transcription_text: str, speaker_mapping: Dict[str, str]) -> str:
         """

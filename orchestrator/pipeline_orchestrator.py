@@ -281,6 +281,6 @@ class AudioPipelineOrchestrator:
             # Mettre à jour le statut en cas d'erreur
             try:
                 self.log_manager.log_status(session_id, 'error', f'Erreur lors du traitement audio: {str(e)}')
-            except:
-                pass
+            except Exception as log_error:
+                logger.warning(f"Erreur non critique lors de la journalisation: {log_error}")
             raise

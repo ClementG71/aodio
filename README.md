@@ -104,6 +104,31 @@ L'application utilise une architecture hybride optimisée :
 3. Ajouter les variables d'environnement dans les paramètres du projet
 4. Railway détectera automatiquement le `Procfile` et déploiera l'application
 
+### Déploiement sur Dokploy
+
+1. **Prérequis** :
+   - Compte Dokploy
+   - Serveur VPS avec Docker et Docker Compose
+   - Clés API (MISTRAL_API_KEY, RUNPOD_API_KEY, etc.)
+
+2. **Configuration** :
+   - Copier `.env.example` en `.env` et configurer les variables
+   - Ajouter les variables spécifiques à Dokploy :
+     ```env
+     DOKPLOY_ENV=true
+     DOKPLOY_PUBLIC_DOMAIN=https://votre-domaine.com
+     ```
+
+3. **Déploiement** :
+   - Suivre les instructions dans `DOKPLOY_SETUP.md`
+   - Déployer avec `dokploy deploy`
+
+4. **Vérification** :
+   - Tester la route de santé : `curl https://votre-domaine.com/health`
+   - Vérifier les logs : `dokploy logs`
+
+Pour plus de détails, voir `DOKPLOY_SETUP.md` et `DOKPLOY_FIX.md`.
+
 ## Utilisation
 
 ### Workflow de traitement

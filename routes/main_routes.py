@@ -22,12 +22,8 @@ from services.document_generator import DocumentGenerator
 from services.log_manager import LogManager
 from orchestrator.pipeline_orchestrator import PipelineOrchestrator, AudioPipelineOrchestrator
 
-# Configuration
-UPLOAD_FOLDER = os.getenv('UPLOAD_FOLDER', 'uploads')
-PROCESSED_FOLDER = os.getenv('PROCESSED_FOLDER', 'processed')
-LOGS_FOLDER = os.getenv('LOGS_FOLDER', 'logs')
-MAX_FILE_SIZE = 500 * 1024 * 1024  # 500 MB
-ALLOWED_EXTENSIONS = {'wav', 'mp3', 'm4a', 'flac', 'ogg', 'webm'}
+# Import de la configuration centralisée
+from config import UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER, BASE_DIR, MAX_FILE_SIZE, ALLOWED_EXTENSIONS
 
 logger = logging.getLogger(__name__)
 
@@ -64,12 +60,12 @@ def create_app():
     log_manager = LogManager(LOGS_FOLDER)
     
     # Déterminer l'URL de base de l'application
-    app_base_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
-    if app_base_url:
-        if not app_base_url.startswith('http'):
-            app_base_url = f"https://{app_base_url}"
-    else:
-        app_base_url = os.getenv('APP_BASE_URL', 'http://localhost:5000')
+    # Priorité: DOKPLOY_PUBLIC_DOMAIN > RAILWAY_PUBLIC_DOMAIN > APP_BASE_URL > localhost
+    app_base_url = (os.getenv('DOKPLOY_PUBLIC_DOMAIN') or 
+                   os.getenv('RAILWAY_PUBLIC_DOMAIN') or 
+                   os.getenv('APP_BASE_URL', 'http://localhost:5000'))
+    if app_base_url and not app_base_url.startswith('http'):
+        app_base_url = f"https://{app_base_url}"
     
     # Initialiser les services RunPod et Mistral avec logging détaillé
     runpod_worker = None
@@ -135,17 +131,7 @@ def create_app():
             logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
         except Exception as e:
             logger.error(f"Échec de l'initialisation du Pipeline Orchestrator: {str(e)}", exc_info=True)
-            pipeline_orchestrator = PipelineOrchestrator(
-                audio_processor=audio_processor,
-                diarization_service=runpod_worker,
-                transcription_service=mistral_client,
-                llm_speaker_mapper=mistral_processor,
-                document_generator=document_generator,
-                log_manager=log_manager
-            )
-            logger.info("Pipeline Orchestrator initialisé avec succès - toutes les fonctionnalités disponibles")
-        except Exception as e:
-            logger.error(f"Échec de l'initialisation du Pipeline Orchestrator: {str(e)}", exc_info=True)
+            pipeline_orchestrator = None
     else:
         missing_services = []
         if not runpod_worker:
@@ -491,9 +477,9 @@ def create_app():
                 logger.warning(f"secure_filename a modifié les valeurs: session_id={session_id}->{safe_session_id}, filename={filename}->{safe_filename}")
                 return jsonify({'error': 'Nom de fichier ou session invalide'}), 400
             
-            # Utiliser un chemin absolu pour éviter les problèmes de chemin relatif
-            # Le dossier uploads est à la racine du projet, pas dans routes/
-            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            # Utiliser le chemin de configuration (déjà absolu dans config.py)
+            # Compatible avec Dokploy qui utilise des chemins absolus
+            upload_folder_abs = Path(UPLOAD_FOLDER)
             file_path = upload_folder_abs / safe_session_id / safe_filename
             
             if not file_path.exists():
@@ -539,8 +525,9 @@ def create_app():
             session_id = str(uuid.uuid4())
             session['processing_id'] = session_id
             
-            # Utiliser un chemin absolu pour le dossier de session
-            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            # Utiliser le chemin de configuration (déjà absolu dans config.py)
+            # Compatible avec Dokploy qui utilise des chemins absolus
+            upload_folder_abs = Path(UPLOAD_FOLDER)
             session_folder = upload_folder_abs / session_id
             session_folder.mkdir(exist_ok=True)
             
@@ -665,8 +652,8 @@ def create_app():
     def download_document(session_id, document_type):
         """Télécharge un document généré"""
         try:
-            # Utiliser un chemin absolu pour le metadata
-            upload_folder_abs = Path(app.root_path).parent / UPLOAD_FOLDER
+            # Utiliser le chemin de configuration (déjà absolu dans config.py)
+            upload_folder_abs = Path(UPLOAD_FOLDER)
             metadata_path = upload_folder_abs / session_id / 'metadata.json'
             if not metadata_path.exists():
                 return jsonify({'error': 'Session introuvable'}), 404

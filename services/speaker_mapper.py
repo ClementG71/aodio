@@ -3,9 +3,11 @@ Service de mapping des locuteurs utilisant Spacy et Fuzzy Matching
 Permet d'identifier les locuteurs sans utiliser systématiquement un LLM
 """
 import logging
-import spacy
+import re
 from fuzzywuzzy import process, fuzz
 from typing import Dict, List, Any, Tuple, Optional
+
+from services.nlp_service import get_nlp
 
 logger = logging.getLogger(__name__)
 
@@ -16,36 +18,12 @@ class SpeakerMapper:
     """
     
     def __init__(self):
-        """Initialise le modèle Spacy - chargement lazy"""
-        self._nlp = None
-        self._model_loaded = False
-        logger.info("SpeakerMapper initialisé - modèle Spacy sera chargé à la première utilisation")
+        """Initialise le mapper - utilise le singleton Spacy"""
+        logger.info("SpeakerMapper initialisé - utilisera le singleton Spacy")
     
     def _get_nlp(self):
-        """Charge le modèle Spacy de manière lazy (thread-safe)"""
-        if self._model_loaded:
-            return self._nlp
-        
-        # Double-checked locking pattern pour thread-safety
-        if self._nlp is None:
-            try:
-                # Utilisation de md au lieu de lg pour économiser de la mémoire
-                self._nlp = spacy.load("fr_core_news_md")
-                self._model_loaded = True
-                logger.info("Modèle Spacy 'fr_core_news_md' chargé avec succès")
-            except OSError:
-                logger.warning("Modèle Spacy 'fr_core_news_md' non trouvé. Tentative de téléchargement...")
-                try:
-                    from spacy.cli import download
-                    download("fr_core_news_md")
-                    self._nlp = spacy.load("fr_core_news_md")
-                    self._model_loaded = True
-                except Exception as e:
-                    logger.error(f"Impossible de charger Spacy: {e}")
-                    self._nlp = None
-                    self._model_loaded = True
-        
-        return self._nlp
+        """Retourne l'instance Spacy partagée (singleton)"""
+        return get_nlp()
 
     def identify_speakers(self, 
                          transcription_segments: List[Dict[str, Any]], 
@@ -209,9 +187,163 @@ class SpeakerMapper:
     def _has_intro_markers(self, text: str) -> bool:
         """Vérifie si le texte commence par des marqueurs d'introduction"""
         intro_markers = ["bonjour", "merci", "alors", "donc", "tout d'abord", "pour commencer"]
+        nlp = self._get_nlp()
+        if not nlp:
+            return False
         doc = nlp(text[:100].lower())
         # Vérifier les 3 premiers mots
         for token in list(doc)[:5]:
             if token.text in intro_markers:
                 return True
         return False
+
+
+class EnhancedSpeakerMapper:
+    """
+    Mapper amélioré qui analyse les caractéristiques comportementales de chaque speaker
+    pour améliorer l'identification des locuteurs avec un LLM.
+    """
+    
+    def __init__(self):
+        """Initialise le mapper amélioré"""
+        pass
+    
+    def analyze_speaker_characteristics(self, 
+                                      segments: List[Dict[str, Any]], 
+                                      participants: List[str],
+                                      president: Optional[str] = None) -> Dict[str, Dict[str, Any]]:
+        """
+        Analyse chaque SPEAKER_XX pour extraire des caractéristiques comportementales.
+        
+        Args:
+            segments: Liste des segments de transcription
+            participants: Liste des participants connus
+            president: Nom du président de séance (optionnel)
+            
+        Returns:
+            dict: Statistiques par speaker avec caractéristiques extraites
+        """
+        if not segments:
+            return {}
+        
+        # Grouper les segments par speaker
+        speaker_segments = {}
+        for seg in segments:
+            speaker = seg.get('speaker', 'UNKNOWN')
+            if speaker.startswith('SPEAKER_'):
+                if speaker not in speaker_segments:
+                    speaker_segments[speaker] = []
+                speaker_segments[speaker].append(seg)
+        
+        # Calculer la durée totale de la réunion
+        all_starts = [s.get('start', 0) for s in segments if s.get('start')]
+        all_ends = [s.get('end', 0) for s in segments if s.get('end')]
+        total_duration = max(all_ends) - min(all_starts) if all_starts and all_ends else 0
+        
+        speaker_stats = {}
+        
+        for speaker, segs in speaker_segments.items():
+            if not segs:
+                continue
+            
+            # Calculer les durées
+            durations = [s.get('end', 0) - s.get('start', 0) for s in segs if s.get('start') and s.get('end')]
+            total_duration_speaker = sum(durations)
+            
+            # Extraire les timestamps
+            starts = [s.get('start', 0) for s in segs if s.get('start')]
+            ends = [s.get('end', 0) for s in segs if s.get('end')]
+            
+            # Extraire les textes
+            texts = [s.get('text', '').strip() for s in segs if s.get('text', '').strip()]
+            
+            # Analyser les patterns de langage
+            gives_floor_count = sum(1 for text in texts 
+                                   if re.search(r'(parole est à|la parole à|laisse la parole|donne la parole)', 
+                                               text.lower()))
+            asks_questions_count = sum(1 for text in texts if '?' in text)
+            
+            # Extraire les noms mentionnés (approximation simple)
+            mentioned_names = []
+            for text in texts[:10]:  # Limiter pour performance
+                # Chercher des patterns de noms (majuscules suivies de minuscules)
+                name_patterns = re.findall(r'\b([A-Z][a-z]+(?:\s+[A-Z][a-z]+)*)\b', text)
+                for name in name_patterns:
+                    # Vérifier si c'est un participant
+                    for participant in participants:
+                        if name.lower() in participant.lower() or participant.lower() in name.lower():
+                            if name not in mentioned_names:
+                                mentioned_names.append(name)
+            
+            # Position temporelle dans la réunion
+            first_appearance = min(starts) if starts else 0
+            last_appearance = max(ends) if ends else 0
+            position_in_meeting = "début" if first_appearance < total_duration * 0.2 else \
+                                  "fin" if first_appearance > total_duration * 0.8 else "milieu"
+            
+            # Extraits représentatifs (premiers segments avec texte)
+            sample_texts = texts[:5]  # Premiers 5 segments
+            
+            speaker_stats[speaker] = {
+                'total_duration': total_duration_speaker,
+                'duration_percentage': (total_duration_speaker / total_duration * 100) if total_duration > 0 else 0,
+                'segment_count': len(segs),
+                'first_appearance': first_appearance,
+                'last_appearance': last_appearance,
+                'position_in_meeting': position_in_meeting,
+                'sample_texts': sample_texts,
+                'gives_floor_count': gives_floor_count,
+                'asks_questions_count': asks_questions_count,
+                'mentioned_names': mentioned_names[:5],  # Limiter à 5
+                'avg_segment_duration': total_duration_speaker / len(segs) if segs else 0
+            }
+        
+        return speaker_stats
+    
+    def build_llm_context(self, 
+                         speaker_stats: Dict[str, Dict[str, Any]], 
+                         participants: List[str],
+                         president: Optional[str] = None) -> str:
+        """
+        Construit un prompt riche pour le LLM avec toutes les caractéristiques extraites.
+        
+        Args:
+            speaker_stats: Statistiques par speaker
+            participants: Liste des participants
+            president: Nom du président
+            
+        Returns:
+            str: Contexte formaté pour le prompt LLM
+        """
+        lines = []
+        lines.append("PARTICIPANTS CONNUS:")
+        for p in participants:
+            if president and p == president:
+                lines.append(f"  - {p} (PRÉSIDENT DE SÉANCE)")
+            else:
+                lines.append(f"  - {p}")
+        lines.append("")
+        
+        lines.append("ANALYSE DES LOCUTEURS:")
+        lines.append("")
+        
+        # Trier les speakers par ordre d'apparition
+        sorted_speakers = sorted(speaker_stats.items(), 
+                                key=lambda x: x[1].get('first_appearance', 0))
+        
+        for speaker, stats in sorted_speakers:
+            lines.append(f"{speaker}:")
+            lines.append(f"  - Durée totale de parole: {stats['total_duration']:.1f}s ({stats['duration_percentage']:.1f}% de la réunion)")
+            lines.append(f"  - Nombre de segments: {stats['segment_count']}")
+            lines.append(f"  - Position dans la réunion: {stats['position_in_meeting']} (apparition à {stats['first_appearance']:.1f}s)")
+            lines.append(f"  - Donne la parole: {stats['gives_floor_count']} fois")
+            lines.append(f"  - Pose des questions: {stats['asks_questions_count']} fois")
+            if stats['mentioned_names']:
+                lines.append(f"  - Noms mentionnés: {', '.join(stats['mentioned_names'])}")
+            lines.append(f"  - Extraits représentatifs:")
+            for i, text in enumerate(stats['sample_texts'][:3], 1):
+                text_preview = text[:150] + "..." if len(text) > 150 else text
+                lines.append(f"    {i}. \"{text_preview}\"")
+            lines.append("")
+        
+        return "\n".join(lines)

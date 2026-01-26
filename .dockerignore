@@ -1,34 +1,37 @@
-# Ignorer les fichiers sensibles et inutiles pour le build
-.env
-.env.local
-.env.*
-*.pyc
+# Fichiers à ignorer pour le build Docker
+
+# Environnements virtuels
+venv/
+.env/
+
+# Fichiers Python compilés
 __pycache__/
-*.pyo
-*.pyd
-.Python
-.env
-.venv
-venv
-.environment
-.idea/
-.vscode/
-.DS_Store
-*.sqlite3
-*.db
-*.log
-*.csv
+*.py[cod]
 
-# Dossiers de développement
-node_modules/
+# Fichiers de test
+*.test.py
 
-# Fichiers de configuration locaux
-env.example
+# Fichiers de configuration locale
+.env.local
+.env.dev
 
-# Dossiers de données
+# Fichiers de log
+logs/
+
+# Fichiers uploadés et traités
 uploads/
 processed/
-logs/
+
+# Fichiers de cache
+.pytest_cache/
+
+# Fichiers IDE
+.idea/
+.vscode/
+
+# Fichiers Git
+.git/
+.gitignore
 
 # Fichiers de build
 build/
@@ -37,36 +40,9 @@ dist/
 # Fichiers de documentation
 docs/
 
-# Fichiers de test
-tests/
+# Fichiers de configuration spécifiques
+railway.json
 
-# Fichiers de cache
-.cache/
-*.cache
-
-# Fichiers de coverage
-.coverage
-htmlcov/
-
-# Fichiers de dépendances (ne pas ignorer requirements.txt pour le build)
-# requirements-dev.txt
-# requirements-worker.txt
-
-# Fichiers de configuration
-*.yml
-*.yaml
-*.json
-
-# Fichiers de secrets
-secrets/
-*.secret
-*.key
-
-# Fichiers de backup
-*.bak
-*.backup
-
-# Fichiers temporaires
-*.tmp
-*.swp
-*.swo
+# Fichiers Docker intermédiaires
+Dockerfile
+.dockerignore

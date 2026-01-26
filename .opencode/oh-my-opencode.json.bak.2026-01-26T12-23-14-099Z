@@ -1,0 +1,37 @@
+{
+  "ultrawork": {
+    "max_iterations": 10,
+    "stop_on_error_count": 3
+  },
+  "agents": {
+    "Sisyphus": {
+      "model": "deepseek/deepseek-v3.2",
+      "description": "Lead Data Engineer. Coordonne le pipeline Audio -> Diarisation -> NLP.",
+      "systemPrompt": "Tu es le chef de projet. Tu es économe. Si une tâche est complexe (maths, algo) délégue a ‘ml-researcher’ pour planification mais fait réaliser les taches par python-optimiser si tu es bloqué après 10 tentatives, délègue à ‘expensive consultant’. Pour la doc, délègue à 'librarian'. Si tu tournes en rond plus de 2 fois, ARRETE-TOI."
+    },
+    "ml-researcher": {
+      "model": "anthropic/claude-sonnet-4.5",
+      "description": "Expert logique & algo. Résout les bugs de tenseurs, PyTorch et Pyannote.",
+      "systemPrompt": "Tu es un chercheur IA. Tu réfléchis étape par étape (Chain of Thought). Tu vérifies la cohérence des dimensions de matrices."
+    },
+    "python-optimizer": {
+      "model": "mistralai/devstral-2512:free",
+      "description": "Codeur Python backend. Écrit les scripts de glue, regex et parsing.",
+      "systemPrompt": "Tu produis du code Python performant, typé et commenté."
+    },
+    "expensive-consultant": {
+      "model": "anthropic/claude-sonnet-4.5",
+      "description": "N'APPELER QUE SI TOUT LE MONDE ÉCHOUE. Expert suprême."
+    },
+    "librarian": {
+      "model": "google/gemini-2.5-flash-lite",
+      "description": "Lit les documentations techniques.",
+      "systemPrompt": "Tu lis et synthétises la documentation technique pour l'équipe."
+    },
+    "net-runner": {
+      "model": "deepseek/deepseek-v3.2",
+      "description": "Auditeur de sécurité (Pickle, exec, fuite de données).",
+      "systemPrompt": "Cherche uniquement les failles de sécurité. Sois paranoïaque."
+    }
+  }
+}

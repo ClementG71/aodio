@@ -4,8 +4,9 @@ Extrait de mistral_voxtral.py pour une meilleure modularité
 """
 import re
 import logging
-import spacy
 from typing import Dict, List, Any
+
+from services.nlp_service import get_nlp
 
 logger = logging.getLogger(__name__)
 
@@ -14,28 +15,12 @@ class TranscriptionAligner:
     """Aligne et distribue le texte de transcription avec les segments de diarisation"""
     
     def __init__(self):
-        """Initialise l'aligner - chargement lazy du modèle Spacy"""
-        self._nlp = None
-        self._model_loaded = False
-        logger.info("TranscriptionAligner initialisé - modèle Spacy sera chargé à la première utilisation")
+        """Initialise l'aligner - utilise le singleton Spacy"""
+        logger.info("TranscriptionAligner initialisé - utilisera le singleton Spacy")
     
     def _get_nlp(self):
-        """Charge le modèle Spacy de manière lazy (thread-safe)"""
-        if self._model_loaded:
-            return self._nlp
-        
-        # Double-checked locking pattern pour thread-safety
-        if self._nlp is None:
-            try:
-                self._nlp = spacy.load("fr_core_news_md")  # Utilisation de md au lieu de lg
-                self._model_loaded = True
-                logger.info("Modèle Spacy 'fr_core_news_md' chargé pour l'alignement")
-            except OSError:
-                logger.warning("Modèle 'fr_core_news_md' non trouvé, alignement purement statistique")
-                self._nlp = None
-                self._model_loaded = True
-        
-        return self._nlp
+        """Retourne l'instance Spacy partagée (singleton)"""
+        return get_nlp()
     
     def calculate_optimal_offset(self, transcriptions: List[Dict[str, Any]], 
                                  diarization_segments: List[Dict[str, Any]]) -> float:

@@ -14,7 +14,6 @@ import time
 import base64
 from pathlib import Path
 from typing import Dict, List, Any, Optional
-from typing import Dict, List, Any, Optional
 from mistralai import Mistral
 from mistralai.models import SDKError
 
@@ -214,7 +213,10 @@ class MistralVoxtralClient:
         Returns:
             str: URL publique du fichier audio
         """
-        app_base_url = os.getenv('RAILWAY_PUBLIC_DOMAIN') or os.getenv('APP_BASE_URL', 'http://localhost:5000')
+        # Priorité: DOKPLOY_PUBLIC_DOMAIN > RAILWAY_PUBLIC_DOMAIN > APP_BASE_URL > localhost
+        app_base_url = (os.getenv('DOKPLOY_PUBLIC_DOMAIN') or 
+                       os.getenv('RAILWAY_PUBLIC_DOMAIN') or 
+                       os.getenv('APP_BASE_URL', 'http://localhost:5000'))
         if not app_base_url.startswith('http'):
             app_base_url = f"https://{app_base_url}"
         
@@ -807,81 +809,3 @@ VALIDATION OBLIGATOIRE :
         
         return transcriptions
     
-    def transcribe_audio_from_url(self, audio_url: str,
-                                  diarization_segments: List[Dict[str, Any]],
-                                  language: str = "fr") -> Dict[str, Any]:
-        """
-        Transcrit un fichier audio depuis une URL avec Voxtral Mini
-        
-        Args:
-            audio_url: URL du fichier audio
-            diarization_segments: Segments de diarisation pour mapper les speakers
-            language: Langue de l'audio (défaut: "fr")
-            
-        Returns:
-            dict: Transcription avec segments mappés aux speakers
-        """
-        max_retries = 3
-        retry_delay = 5
-        
-        for attempt in range(max_retries):
-            try:
-                logger.info(f"Transcription depuis URL avec {self.model} (tentative {attempt + 1}/{max_retries}): {audio_url}")
-                
-                with mistral_breaker:
-                    transcription_response = self.client.audio.transcriptions.complete(
-                        model=self.model,
-                        file_url=audio_url,
-                        language=language,
-                        temperature=0.0,
-                        timestamp_granularities=["segment"]
-                    )
-                
-                mistral_segments = transcription_response.segments if hasattr(transcription_response, 'segments') else []
-                
-                transcriptions = []
-                for diar_seg in diarization_segments:
-                    matching_mistral = None
-                    for mistral_seg in mistral_segments:
-                        mistral_start = getattr(mistral_seg, 'start', mistral_seg.get('start', 0))
-                        mistral_end = getattr(mistral_seg, 'end', mistral_seg.get('end', float('inf')))
-                        
-                        if mistral_start <= diar_seg['start'] < mistral_end:
-                            matching_mistral = mistral_seg
-                            break
-                    
-                    mistral_text = ""
-                    if matching_mistral:
-                        mistral_text = getattr(matching_mistral, 'text', matching_mistral.get('text', ''))
-                    
-                    transcriptions.append({
-                        "start": diar_seg['start'],
-                        "end": diar_seg['end'],
-                        "speaker": diar_seg['speaker'],
-                        "text": mistral_text
-                    })
-                
-                result = {
-                    "segments": transcriptions,
-                    "full_text": transcription_response.text if hasattr(transcription_response, 'text') else ""
-                }
-                
-                logger.info(f"Transcription terminée: {len(transcriptions)} segments")
-                return result
-                
-            except SDKError as e:
-                if hasattr(e, 'http_res') and e.http_res and e.http_res.status_code == 503:
-                    if attempt < max_retries - 1:
-                        logger.warning(f"Service Mistral AI temporairement indisponible (503), nouvelle tentative dans {retry_delay}s...")
-                        time.sleep(retry_delay)
-                        retry_delay *= 2
-                        continue
-                    else:
-                        logger.error(f"Service Mistral AI indisponible après {max_retries} tentatives: {str(e)}")
-                        raise Exception(f"Service Mistral AI temporairement indisponible. Veuillez réessayer plus tard. Erreur: {str(e)}")
-                else:
-                    logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
-                    raise
-            except Exception as e:
-                logger.error(f"Erreur lors de la transcription: {str(e)}", exc_info=True)
-                raise

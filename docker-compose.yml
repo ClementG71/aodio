@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    container_name: aodio-web
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - SECRET_KEY=${SECRET_KEY}
+      - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - RUNPOD_API_KEY=${RUNPOD_API_KEY}
+      - RUNPOD_ENDPOINT_ID=${RUNPOD_ENDPOINT_ID}
+      - FLASK_DEBUG=${FLASK_DEBUG:-False}
+      - ALLOWED_ORIGINS=${ALLOWED_ORIGINS}
+      - DOKPLOY_ENV=true
+      - DOKPLOY_PUBLIC_DOMAIN=${DOKPLOY_PUBLIC_DOMAIN}
+    volumes:
+      - ./uploads:/app/uploads
+      - ./processed:/app/processed
+      - ./logs:/app/logs
+    command: gunicorn -w 4 -b 0.0.0.0:5000 --timeout 1800 --graceful-timeout 120 wsgi:app

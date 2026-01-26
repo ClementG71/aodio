@@ -30,10 +30,25 @@ class RunPodWorker:
         self.endpoint_id = endpoint_id
         # URL correcte selon la documentation RunPod : api.runpod.ai (pas .io)
         self.base_url = f"https://api.runpod.ai/v2/{endpoint_id}"
-        self.app_base_url = base_url or os.getenv('RAILWAY_PUBLIC_DOMAIN') or 'http://localhost:5000'
+        
+        # Déterminer l'URL de base de l'application
+        # Priorité: base_url > DOKPLOY_PUBLIC_DOMAIN > RAILWAY_PUBLIC_DOMAIN > localhost
+        if base_url:
+            self.app_base_url = base_url
+        elif os.getenv('DOKPLOY_PUBLIC_DOMAIN'):
+            self.app_base_url = os.getenv('DOKPLOY_PUBLIC_DOMAIN')
+        elif os.getenv('RAILWAY_PUBLIC_DOMAIN'):
+            self.app_base_url = os.getenv('RAILWAY_PUBLIC_DOMAIN')
+        else:
+            self.app_base_url = 'http://localhost:5000'
+        
         # S'assurer que l'URL ne se termine pas par /
         if self.app_base_url.endswith('/'):
             self.app_base_url = self.app_base_url[:-1]
+        
+        # S'assurer que l'URL commence par http ou https
+        if not self.app_base_url.startswith(('http://', 'https://')):
+            self.app_base_url = f'https://{self.app_base_url}'
         
         self.headers = {
             "Authorization": f"Bearer {api_key}",

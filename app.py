@@ -13,20 +13,8 @@ if Path('.env.local').exists():
 else:
     load_dotenv()
 
-# Configuration des dossiers
-VOLUME_PATH = os.getenv('RAILWAY_VOLUME_MOUNT_PATH')
-if VOLUME_PATH and Path(VOLUME_PATH).exists():
-    UPLOAD_FOLDER = str(Path(VOLUME_PATH) / 'uploads')
-    PROCESSED_FOLDER = str(Path(VOLUME_PATH) / 'processed')
-    LOGS_FOLDER = str(Path(VOLUME_PATH) / 'logs')
-else:
-    UPLOAD_FOLDER = 'uploads'
-    PROCESSED_FOLDER = 'processed'
-    LOGS_FOLDER = 'logs'
-
-# Création des dossiers nécessaires
-for folder in [UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER]:
-    Path(folder).mkdir(parents=True, exist_ok=True)
+# Import de la configuration centralisée
+from config import UPLOAD_FOLDER, PROCESSED_FOLDER, LOGS_FOLDER, BASE_DIR
 
 # Configuration du logging
 Path(LOGS_FOLDER).mkdir(parents=True, exist_ok=True)
@@ -39,6 +27,7 @@ try:
             logging.StreamHandler()
         ]
     )
+    from config import VOLUME_PATH
     if VOLUME_PATH and Path(VOLUME_PATH).exists():
         logging.info(f"Utilisation du volume Railway: {VOLUME_PATH}")
 except Exception as e:
@@ -51,10 +40,7 @@ except Exception as e:
 
 logger = logging.getLogger(__name__)
 
-# Configuration des variables d'environnement pour les modules
-os.environ['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-os.environ['PROCESSED_FOLDER'] = PROCESSED_FOLDER
-os.environ['LOGS_FOLDER'] = LOGS_FOLDER
+# Les variables d'environnement sont déjà configurées dans config.py
 
 # Import et création de l'application
 def create_app():
