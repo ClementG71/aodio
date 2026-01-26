@@ -91,46 +91,45 @@ class PipelineOrchestrator:
                     session_id  # Passer session_id pour vérification d'annulation
                 )
                 
-                try:
-                    # Attendre le résultat avec timeout et vérification périodique d'annulation
-                    check_interval = 30  # Vérifier toutes les 30 secondes
-                    elapsed = 0
-                    while elapsed < timeout:
-                        try:
-                            # Vérifier si annulé
-                            if self.log_manager.is_cancelled(session_id):
-                                logger.info(f"Session {session_id} annulée pendant la diarisation")
-                                future.cancel()
-                                # Tenter d'annuler le job RunPod si job_id disponible
-                                return {
-                                    'segments': [],
-                                    'speakers': [],
-                                    'status': 'cancelled',
-                                    'message': 'Traitement annulé par l\'utilisateur'
-                                }
-                            
-                            # Attendre avec timeout partiel
-                            diarization_result = future.result(timeout=min(check_interval, timeout - elapsed))
-                            self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée avec succès')
-                            return diarization_result
-                        except concurrent.futures.TimeoutError:
-                            elapsed += check_interval
-                            continue
-                    
-                    # Timeout global atteint
-                    self.log_manager.log_status(session_id, 'diarization', 'Timeout atteint pour la diarisation')
-                    logger.warning(f"Diarization timeout après {timeout}s pour la session {session_id}")
-                    
-                    # Annuler le job en cours
-                    future.cancel()
-                    
-                    # Retourner un résultat vide pour permettre la continuation
-                    return {
-                        'segments': [],
-                        'speakers': [],
-                        'status': 'timeout',
-                        'message': f'Diarization timeout après {timeout}s'
-                    }
+                # Attendre le résultat avec timeout et vérification périodique d'annulation
+                check_interval = 30  # Vérifier toutes les 30 secondes
+                elapsed = 0
+                while elapsed < timeout:
+                    try:
+                        # Vérifier si annulé
+                        if self.log_manager.is_cancelled(session_id):
+                            logger.info(f"Session {session_id} annulée pendant la diarisation")
+                            future.cancel()
+                            # Tenter d'annuler le job RunPod si job_id disponible
+                            return {
+                                'segments': [],
+                                'speakers': [],
+                                'status': 'cancelled',
+                                'message': 'Traitement annulé par l\'utilisateur'
+                            }
+                        
+                        # Attendre avec timeout partiel
+                        diarization_result = future.result(timeout=min(check_interval, timeout - elapsed))
+                        self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée avec succès')
+                        return diarization_result
+                    except concurrent.futures.TimeoutError:
+                        elapsed += check_interval
+                        continue
+                
+                # Timeout global atteint
+                self.log_manager.log_status(session_id, 'diarization', 'Timeout atteint pour la diarisation')
+                logger.warning(f"Diarization timeout après {timeout}s pour la session {session_id}")
+                
+                # Annuler le job en cours
+                future.cancel()
+                
+                # Retourner un résultat vide pour permettre la continuation
+                return {
+                    'segments': [],
+                    'speakers': [],
+                    'status': 'timeout',
+                    'message': f'Diarization timeout après {timeout}s'
+                }
                     
         except Exception as e:
             # Vérifier si c'est une annulation
