@@ -26,10 +26,11 @@ COPY . .
 # Créer les répertoires nécessaires
 RUN mkdir -p uploads processed logs
 
-# Exposer le port
-EXPOSE 5000
+# Exposer le port (121 par défaut, peut être changé via variable PORT)
+EXPOSE 121
 
 # Commande par défaut
-# Dokploy gère le port via reverse proxy, on utilise 5000 en interne
+# Dokploy gère le port via reverse proxy
+# Utilise PORT de l'environnement si défini, sinon 121 par défaut
 # Le nombre de workers peut être ajusté selon les ressources disponibles
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:5000", "--timeout", "1800", "--graceful-timeout", "120", "wsgi:app"]
+CMD ["sh", "-c", "gunicorn -w 4 -b 0.0.0.0:${PORT:-121} --timeout 1800 --graceful-timeout 120 wsgi:app"]

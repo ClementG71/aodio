@@ -6,7 +6,7 @@ services:
     container_name: aodio-web
     restart: unless-stopped
     ports:
-      - "5000:5000"
+      - "121:121"
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
@@ -20,4 +20,4 @@ services:
       - ./uploads:/app/uploads
       - ./processed:/app/processed
       - ./logs:/app/logs
-    command: gunicorn -w 4 -b 0.0.0.0:5000 --timeout 1800 --graceful-timeout 120 wsgi:app
+    command: gunicorn -w 4 -b 0.0.0.0:121 --timeout 1800 --graceful-timeout 120 wsgi:app

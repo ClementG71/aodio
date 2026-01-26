@@ -1,72 +1,130 @@
 # Aodio
 
-Application de transcription audio et préparation de comptes rendus de réunions pour le Conseil de la Formation et Vie Étudiante d'une université.
+Application de transcription audio et génération de comptes rendus pour conseils universitaires. Transforme des enregistrements audio de réunions en documents structurés (minutes, pré-compte rendu, relevé des décisions) avec identification automatique des locuteurs.
 
 ## Fonctionnalités
 
-- **Upload et traitement audio** : Normalisation et compression des fichiers audio
-- **Diarisation** : Identification des locuteurs avec Pyannote 4.0.1
-- **Transcription** : Transcription verbatim avec Voxtral-small-latest
-- **Traitement LLM** : Mapping des locuteurs, génération de pré-compte rendu, extraction des décisions avec Mistral AI
-- **Génération de documents** : Création de documents en formats TXT, DOCX et PDF
+- **Upload et traitement audio** : Normalisation, compression et amélioration de la qualité audio
+- **Diarisation** : Identification automatique des locuteurs avec Pyannote 4.0 (via RunPod)
+- **Transcription** : Transcription verbatim avec Voxtral (Mistral AI)
+- **Identification des locuteurs** : Mapping des labels `SPEAKER_XX` vers les noms réels avec analyse comportementale et LLM
+- **Génération de documents** : Création automatique de minutes, pré-compte rendu et relevé des décisions en formats TXT, DOCX et PDF
 - **Historique** : Suivi de tous les traitements effectués
-- **Interface web** : Interface Flask avec Tailwind CSS
+- **Interface web** : Interface Flask avec suivi en temps réel
 
-## Stack technique
+## Architecture
 
-- **Frontend** : Flask avec Tailwind CSS (hébergé sur Railway)
-- **Traitement audio** : Pyannote 4.0.1 (via RunPod) et Voxtral-small-latest
-- **LLM** : Mistral AI (Mistral Small et Large)
-- **Génération de documents** : python-docx, reportlab
+L'application utilise une architecture hybride optimisée pour la performance et la simplicité :
 
-## Installation
+```mermaid
+flowchart TB
+    subgraph Dokploy["Dokploy/VPS - Application Flask"]
+        Flask[Flask App]
+        Upload[Upload Audio]
+        Files[Files Service]
+        AudioProc[Audio Processor]
+        Docs[Document Generator]
+        LLMProc[Mistral Processor]
+    end
+    
+    subgraph RunPod["RunPod GPU Worker"]
+        Pyannote[Pyannote 4.0<br/>Diarisation]
+    end
+    
+    subgraph MistralAI["Mistral AI API"]
+        Voxtral[Voxtral<br/>Transcription]
+        LLM[Mistral LLM<br/>Mapping & Génération]
+    end
+    
+    Upload --> Flask
+    Flask --> AudioProc
+    AudioProc --> Files
+    Files -->|URL publique| Pyannote
+    Files -->|URL publique| Voxtral
+    Pyannote -->|Segments| Flask
+    Voxtral -->|Transcription| Flask
+    Flask --> LLMProc
+    LLMProc --> LLM
+    LLM --> Docs
+    Docs --> Flask
+```
+
+### Composants principaux
+
+1. **Flask Application** (Dokploy/Railway)
+   - Interface web et orchestration du pipeline
+   - Service de fichiers pour RunPod
+   - Génération de documents finaux
+
+2. **RunPod Worker** (GPU)
+   - Diarisation avec Pyannote 4.0
+   - Nécessite GPU (RTX 3090 ou A100 recommandé)
+
+3. **Mistral AI** (API)
+   - Transcription avec Voxtral
+   - Mapping des locuteurs avec Mistral Small
+   - Génération de pré-compte rendu et extraction de décisions avec Mistral Large
+
+## Pipeline de traitement
+
+Le pipeline suit cette séquence :
+
+1. **Upload** : Fichier audio + documents contextuels (ordre du jour, liste participants, relevés de votes)
+2. **Préprocessing audio** : Normalisation, réduction de bruit, conversion en WAV 16kHz mono
+3. **Diarisation et Transcription (parallèle)** :
+   - **Diarisation** : Pyannote identifie les segments de parole et attribue `SPEAKER_XX`
+   - **Transcription** : Voxtral transcrit tout l'audio (stratégie Text-First)
+4. **Alignement** : Fusion des segments de transcription avec la diarisation
+5. **Mapping des locuteurs** : Identification des `SPEAKER_XX` avec analyse comportementale + LLM
+6. **Traitement LLM** :
+   - Génération du pré-compte rendu (Mistral Large)
+   - Extraction des décisions et votes (Mistral Large)
+7. **Génération de documents** : Création des fichiers finaux (TXT, DOCX, PDF)
+
+## Installation locale
 
 ### Prérequis
 
 - Python 3.9+
 - FFmpeg (pour le traitement audio)
 - Clés API :
-  - Mistral AI (LLM)
-  - RunPod
-  - Voxtral (si utilisé directement)
+  - Mistral AI (pour transcription et LLM)
+  - RunPod (pour diarisation)
+  - Hugging Face (pour accéder au modèle Pyannote)
 
-### Installation locale
+### Installation
 
-1. Cloner le repository :
+1. **Cloner le repository** :
 ```bash
 git clone <repository-url>
 cd aodio
 ```
 
-2. Créer un environnement virtuel :
+2. **Créer un environnement virtuel** :
 ```bash
 python -m venv venv
 source venv/bin/activate  # Sur Windows: venv\Scripts\activate
 ```
 
-3. Installer les dépendances :
+3. **Installer les dépendances** :
 ```bash
-# Pour l'application Flask (Railway)
 pip install -r requirements.txt
-
-# Pour le worker RunPod (si vous développez le worker)
-pip install -r requirements-worker.txt
 ```
 
-**Note** : `requirements.txt` est optimisé pour Railway (sans PyTorch/Pyannote, ~500 MB). `requirements-worker.txt` contient toutes les dépendances nécessaires pour le worker RunPod (~3.5 GB avec PyTorch).
+**Note** : Le modèle Spacy français sera téléchargé automatiquement lors du premier usage.
 
-4. Configurer les variables d'environnement :
+4. **Configurer les variables d'environnement** :
 ```bash
-cp .env.example .env
+cp env.example .env
 # Éditer .env et ajouter vos clés API
 ```
 
-5. Lancer l'application :
+5. **Lancer l'application** :
 ```bash
 python app.py
 ```
 
-L'application sera accessible sur `http://localhost:5000`
+L'application sera accessible sur `http://localhost:121` (ou le port défini dans PORT)
 
 ## Configuration
 
@@ -75,131 +133,314 @@ L'application sera accessible sur `http://localhost:5000`
 Créer un fichier `.env` avec les variables suivantes :
 
 ```env
-SECRET_KEY=your-secret-key-here
-MISTRAL_API_KEY=your-mistral-api-key
-RUNPOD_API_KEY=your-runpod-api-key
-RUNPOD_ENDPOINT_ID=your-runpod-endpoint-id
-MISTRAL_API_KEY=your-mistral-api-key
+# Clé secrète Flask (générer avec: python -c "import secrets; print(secrets.token_hex(32))")
+SECRET_KEY=votre-secret-key-64-caracteres
+
+# Configuration Flask
+FLASK_DEBUG=False
+ALLOWED_ORIGINS=https://votre-domaine.com
+
+# Mistral AI (transcription + LLM)
+MISTRAL_API_KEY=votre-cle-mistral
+
+# RunPod (diarisation)
+RUNPOD_API_KEY=votre-cle-runpod
+RUNPOD_ENDPOINT_ID=votre-endpoint-id
+
+# Configuration Dokploy (si déployé sur Dokploy)
+DOKPLOY_ENV=true
+DOKPLOY_PUBLIC_DOMAIN=https://votre-domaine.com
 ```
 
-**Note** : `MISTRAL_ENDPOINT` n'est pas nécessaire (valeur par défaut utilisée).
+### Génération de SECRET_KEY
 
-### Architecture
+Générer une clé secrète sécurisée :
+```bash
+python3 -c "import secrets; print(secrets.token_hex(32))"
+```
 
-L'application utilise une architecture hybride optimisée :
+### Obtenir les clés API
 
-- **Pyannote (Diarisation)** : Exécuté sur RunPod (nécessite GPU)
-  - Le worker RunPod doit être configuré pour exécuter Pyannote 4.0.1
-  - Voir `RUNPOD_SETUP.md` pour la configuration du worker
+#### Mistral AI
 
-- **Voxtral (Transcription)** : Appel direct à l'API Mistral AI
-  - Pas besoin de vLLM sur RunPod
-  - Utilise l'API officielle Mistral AI (`voxtral-small-latest`)
-  - Plus simple à maintenir et à déployer
+1. Créer un compte sur [https://console.mistral.ai/](https://console.mistral.ai/)
+2. Aller dans "API Keys"
+3. Créer une nouvelle clé API
 
-### Déploiement sur Railway
+#### RunPod
 
-1. Créer un nouveau projet sur Railway
-2. Connecter le repository GitHub
-3. Ajouter les variables d'environnement dans les paramètres du projet
-4. Railway détectera automatiquement le `Procfile` et déploiera l'application
+1. Créer un compte sur [https://www.runpod.io/](https://www.runpod.io/)
+2. **API Key** : [https://www.runpod.io/console/user/settings](https://www.runpod.io/console/user/settings) → Section "API Keys"
+3. **Endpoint ID** : Créer un endpoint (voir section Déploiement RunPod)
+
+#### Hugging Face (pour RunPod)
+
+1. Créer un compte sur [https://huggingface.co](https://huggingface.co)
+2. Accepter les conditions d'utilisation Pyannote : [https://huggingface.co/pyannote/speaker-diarization-3.1](https://huggingface.co/pyannote/speaker-diarization-3.1)
+3. Créer un token : [https://huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) → Type "Read"
+
+## Déploiement
 
 ### Déploiement sur Dokploy
 
 1. **Prérequis** :
-   - Compte Dokploy
-   - Serveur VPS avec Docker et Docker Compose
-   - Clés API (MISTRAL_API_KEY, RUNPOD_API_KEY, etc.)
+   - VPS avec Dokploy installé
+   - Docker et Docker Compose
 
 2. **Configuration** :
-   - Copier `.env.example` en `.env` et configurer les variables
-   - Ajouter les variables spécifiques à Dokploy :
-     ```env
-     DOKPLOY_ENV=true
-     DOKPLOY_PUBLIC_DOMAIN=https://votre-domaine.com
-     ```
+   - Ajouter toutes les variables d'environnement dans Dokploy
+   - Configurer `DOKPLOY_ENV=true` et `DOKPLOY_PUBLIC_DOMAIN`
 
-3. **Déploiement** :
-   - Suivre les instructions dans `DOKPLOY_SETUP.md`
-   - Déployer avec `dokploy deploy`
+3. **Dockerfile** :
+   - Le `Dockerfile` est déjà configuré
+   - Port 121 exposé par défaut (configurable via variable PORT, Dokploy gère le reverse proxy)
 
-4. **Vérification** :
-   - Tester la route de santé : `curl https://votre-domaine.com/health`
-   - Vérifier les logs : `dokploy logs`
+4. **Volumes** :
+   - Les dossiers `uploads/`, `processed/`, `logs/` sont créés automatiquement
+   - Pour la persistance, configurer des volumes Docker dans Dokploy
 
-Pour plus de détails, voir `DOKPLOY_SETUP.md` et `DOKPLOY_FIX.md`.
+5. **Vérification** :
+```bash
+curl https://votre-domaine.com/health
+```
 
-## Utilisation
+### Déploiement du Worker RunPod
 
-### Workflow de traitement
+1. **Créer un endpoint RunPod** :
+   - Aller sur [https://www.runpod.io/console/serverless](https://www.runpod.io/console/serverless)
+   - Cliquer sur "New Endpoint"
+   - Choisir "Git"
+   - Remplir :
+     - **Repository URL** : URL de votre repo GitHub
+     - **Branch** : `main`
+     - **Dockerfile Path** : `runpod_worker/Dockerfile.runpod`
+     - **Handler Path** : Laisser vide
+     - **GPU Type** : RTX 3090 ou A100 (minimum 16 GB VRAM)
+     - **Container Disk** : 20 GB
 
-1. **Upload** : Uploader le fichier audio et les documents contextuels (ordre du jour, liste des participants, relevés de votes)
-2. **Traitement** : L'application effectue automatiquement :
-   - Normalisation et compression de l'audio
-   - Diarisation avec Pyannote
-   - Transcription avec Voxtral
-   - Mapping des locuteurs avec Mistral AI
-   - Génération du pré-compte rendu
-   - Extraction des décisions
-3. **Téléchargement** : Télécharger les documents générés (Minutes, Pré-CR, Relevé des décisions)
+2. **Variables d'environnement RunPod** :
+   - Ajouter `HF_TOKEN=votre-token-huggingface`
 
-### Formats de documents générés
+3. **Tester l'endpoint** :
+   - Noter l'Endpoint ID généré
+   - Vérifier que le worker démarre correctement
+   - Consulter les logs pour confirmer le chargement de Pyannote
 
-Tous les documents sont préfixés par la date de la séance au format `YYYYMMDD` :
+4. **Configuration Warm Workers** (recommandé) :
+   - Dans les paramètres de l'endpoint, configurer 1 worker minimum
+   - Évite le cold start (~2-3 minutes)
 
-- `YYYYMMDD_Minutes.txt/docx/pdf` : Transcription verbatim avec mapping des locuteurs
-- `YYYYMMDD_Pre-Compte-rendu.txt/docx/pdf` : Pré-compte rendu condensé et reformulé
-- `YYYYMMDD_Releve-des-decisions.txt/docx/pdf` : Liste des décisions extraites
+Pour plus de détails, voir `runpod_worker/README.md`
+
+## API Endpoints
+
+### `POST /upload`
+
+Upload d'un fichier audio et documents contextuels.
+
+**Form Data** :
+- `audio_file` : Fichier audio (WAV, MP3, M4A, FLAC, OGG, WEBM)
+- `ordre_du_jour` : Fichier PDF/TXT (optionnel)
+- `liste_participants` : Fichier TXT avec noms (un par ligne)
+- `releves_votes` : Fichier PDF/TXT (optionnel)
+- `president_seance` : Nom du président (texte)
+- `date_seance` : Date de la séance (format YYYY-MM-DD)
+
+**Réponse** :
+```json
+{
+  "success": true,
+  "session_id": "uuid",
+  "message": "Fichiers uploadés avec succès. Traitement audio en cours..."
+}
+```
+
+### `GET /status/<session_id>`
+
+Récupère le statut du traitement d'une session.
+
+**Réponse** :
+```json
+{
+  "session_id": "uuid",
+  "status": "processing",
+  "stages": [
+    {
+      "stage": "diarization",
+      "message": "Diarisation terminée",
+      "timestamp": "2024-01-01T12:00:00"
+    }
+  ]
+}
+```
+
+### `GET /download/<session_id>/<document_type>`
+
+Télécharge un document généré.
+
+**Types de documents** :
+- `minutes_txt`, `minutes_docx`, `minutes_pdf`
+- `pre_cr_txt`, `pre_cr_docx`, `pre_cr_pdf`
+- `decisions_txt`, `decisions_docx`, `decisions_pdf`
+
+### `GET /health`
+
+Vérifie l'état de l'application et des services.
+
+**Réponse** :
+```json
+{
+  "status": "ok",
+  "services": {
+    "runpod_available": true,
+    "mistral_available": true
+  }
+}
+```
+
+### `GET /files/<session_id>/<filename>`
+
+Service interne pour servir les fichiers audio à RunPod (CORS activé).
+
+## Documents générés
+
+Pour chaque session, l'application génère 9 documents :
+
+### Minutes (Transcription verbatim)
+- Format : TXT, DOCX, PDF
+- Contenu : Transcription complète avec timestamps et attribution des locuteurs
+
+### Pré-compte rendu
+- Format : TXT, DOCX, PDF
+- Contenu : Synthèse structurée de la réunion générée par Mistral Large
+
+### Relevé des décisions
+- Format : TXT, DOCX, PDF
+- Contenu : Liste des décisions actées et résultats des votes extraits par Mistral Large
+
+## Dépannage
+
+### Erreurs courantes
+
+#### "RUNPOD_API_KEY n'est pas configurée"
+- Vérifier que la variable est bien définie dans Dokploy
+- Vérifier qu'il n'y a pas d'espaces avant/après
+- Redémarrer l'application après modification
+
+#### "Endpoint non trouvé (404)"
+- Vérifier que `RUNPOD_ENDPOINT_ID` est correct
+- Vérifier que l'endpoint existe dans RunPod
+- Vérifier que l'endpoint est actif (pas en pause)
+
+#### "Authentification échouée (401)" (RunPod)
+- Vérifier que `RUNPOD_API_KEY` est correcte
+- Vérifier que la clé n'a pas expiré
+- Créer une nouvelle clé API si nécessaire
+
+#### "Model not found" ou "401 Unauthorized" (RunPod)
+- Vérifier que le token Hugging Face (`HF_TOKEN`) est correct
+- Vérifier que vous avez accepté les conditions d'utilisation Pyannote
+- Vérifier que le token a les permissions "Read"
+
+#### "Out of memory" ou "CUDA out of memory"
+- Utiliser un GPU avec plus de VRAM (minimum 16 GB recommandé)
+- Réduire la taille des fichiers audio (normaliser avant l'envoi)
+
+#### Le worker RunPod ne démarre pas
+- Vérifier les logs dans RunPod (console → endpoint → Logs)
+- Vérifier que `HF_TOKEN` est configuré dans l'endpoint
+- Vérifier que vous avez des crédits RunPod disponibles
+
+#### Transcription incomplète ou erronée
+- Vérifier la qualité audio (normalisation activée par défaut)
+- Vérifier que l'audio est en français (langue par défaut)
+- Les fichiers très longs (>2h) peuvent prendre du temps
+
+### Logs
+
+Les logs sont disponibles dans :
+- **Application** : `logs/app.log`
+- **RunPod** : Console RunPod → Votre endpoint → Logs
+- **Dokploy** : Interface Dokploy → Logs
+
+### Vérification de la configuration
+
+Tester l'endpoint de santé :
+```bash
+curl https://votre-domaine.com/health
+```
+
+Vérifier que tous les services sont disponibles :
+```json
+{
+  "services": {
+    "runpod_available": true,
+    "mistral_available": true
+  }
+}
+```
 
 ## Structure du projet
 
 ```
 aodio/
-├── app.py                 # Application Flask principale
-├── requirements.txt       # Dépendances Python (Railway - sans PyTorch)
-├── requirements-worker.txt  # Dépendances pour le worker RunPod (avec PyTorch)
-├── Procfile              # Configuration Railway
-├── railway.json          # Configuration Railway
-├── services/            # Services de traitement
-│   ├── audio_processor.py
-│   ├── runpod_worker.py
-│   ├── llm_processor.py
-│   ├── document_generator.py
-│   └── log_manager.py
-├── templates/            # Templates HTML
-│   ├── base.html
-│   ├── index.html
-│   ├── history.html
-│   └── confidentialite.html
-├── uploads/             # Fichiers uploadés (créé automatiquement)
-├── processed/           # Documents générés (créé automatiquement)
-└── logs/                # Logs de traitement (créé automatiquement)
+├── app.py                 # Point d'entrée principal
+├── config.py              # Configuration centralisée
+├── wsgi.py                # Entry point WSGI pour Gunicorn
+├── routes/
+│   └── main_routes.py    # Routes Flask principales
+├── services/
+│   ├── audio_processor.py      # Traitement audio
+│   ├── runpod_worker.py        # Client RunPod
+│   ├── mistral_voxtral.py      # Client Mistral (transcription)
+│   ├── mistral_processor.py    # Client Mistral (LLM)
+│   ├── speaker_mapper.py       # Mapping des locuteurs
+│   ├── document_generator.py   # Génération de documents
+│   └── ...
+├── orchestrator/
+│   └── pipeline_orchestrator.py  # Orchestration du pipeline
+├── runpod_worker/
+│   ├── handler.py         # Handler RunPod (diarisation)
+│   └── Dockerfile.runpod  # Dockerfile pour RunPod
+├── templates/             # Templates HTML
+├── static/                # Assets statiques
+├── uploads/               # Fichiers uploadés
+├── processed/             # Documents générés
+└── logs/                  # Logs de l'application
 ```
 
-## Limitations et optimisations
+## Technologies utilisées
 
-- **Limite de tokens** : Les appels API sont limités pour éviter la surcharge (100k tokens par appel pour Voxtral, 4k tokens pour Mistral Small, 8k tokens pour Mistral Large)
-- **Traitement par batch** : La transcription est effectuée par batches de segments pour optimiser les appels API
-- **Taille de fichier** : Limite de 500 MB par fichier audio
+- **Backend** : Flask 3.0, Gunicorn
+- **Audio** : FFmpeg, PyDub, Librosa
+- **Diarisation** : Pyannote 4.0 (via RunPod)
+- **Transcription** : Mistral Voxtral
+- **NLP** : Spacy (fr_core_news_md), FuzzyWuzzy
+- **LLM** : Mistral AI (Small et Large)
+- **Documents** : python-docx, ReportLab
+- **Déploiement** : Docker, Dokploy, RunPod
 
-## Développement
+## Limitations
 
-### Tests locaux
+- **Taille maximale** : 500 MB par fichier audio
+- **Durée** : Pas de limite théorique, mais les fichiers très longs (>2h) peuvent être lents
+- **Formats audio** : WAV, MP3, M4A, FLAC, OGG, WEBM
+- **Langue** : Français (configurable dans le code)
 
-Pour tester localement sans RunPod, vous pouvez modifier `services/runpod_worker.py` pour utiliser des mocks ou des services locaux.
+## Coûts estimés
 
-### Améliorations futures
+- **RunPod** : ~$0.29/heure (RTX 3090), ~$1.79/heure (A100)
+- **Mistral AI** : Facturation à l'usage (transcription + LLM)
+- **Temps moyen par réunion (1h)** : ~2-5 minutes de traitement
+- **Coût par réunion** : ~$0.01-0.15 selon le GPU
 
-- Utilisation d'embeddings vocaux pour améliorer le mapping des locuteurs
-- Traitement asynchrone avec Celery
-- Interface de gestion des sessions
-- Export vers d'autres formats
+## Support
+
+Pour toute question ou problème :
+- Vérifier les logs de l'application
+- Consulter la section Dépannage
+- Vérifier la configuration des services externes (RunPod, Mistral)
 
 ## Licence
 
-[À définir]
-
-## Contact
-
-Pour toute question ou problème, contactez : contact@aodio.fr
-
+[À compléter selon votre licence]
