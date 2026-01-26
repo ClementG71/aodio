@@ -45,6 +45,8 @@ def load_pipeline():
     """
     Charge le pipeline Pyannote de manière lazy (au premier appel)
     """
+    global pipeline
+    
     # #region agent log
     import json
     log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
@@ -54,8 +56,6 @@ def load_pipeline():
     except Exception:
         pass  # Ignore les erreurs de log en production
     # #endregion
-    
-    global pipeline
     if pipeline is not None:
         # #region agent log
         log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
