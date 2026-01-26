@@ -145,6 +145,40 @@ class LogManager:
                 'message': str(e)
             }
     
+    def cancel_session(self, session_id: str) -> bool:
+        """
+        Marque une session comme annulée
+        
+        Args:
+            session_id: ID de la session à annuler
+            
+        Returns:
+            bool: True si l'annulation a réussi, False sinon
+        """
+        try:
+            self.log_status(session_id, 'cancelled', 'Traitement annulé par l\'utilisateur')
+            return True
+        except Exception as e:
+            logger.error(f"Erreur lors de l'annulation de la session {session_id}: {str(e)}")
+            return False
+    
+    def is_cancelled(self, session_id: str) -> bool:
+        """
+        Vérifie si une session a été annulée
+        
+        Args:
+            session_id: ID de la session
+            
+        Returns:
+            bool: True si la session est annulée, False sinon
+        """
+        try:
+            status = self.get_status(session_id)
+            return status.get('status') == 'cancelled'
+        except Exception as e:
+            logger.error(f"Erreur lors de la vérification d'annulation: {str(e)}")
+            return False
+    
     def get_history(self, limit: int = 50) -> List[Dict[str, Any]]:
         """
         Récupère l'historique des traitements

@@ -117,15 +117,16 @@ class RunPodWorker:
             logger.error(f"Erreur lors de la génération de l'URL: {str(e)}")
             raise
     
-    def diarize_audio(self, audio_path: str) -> Dict[str, Any]:
+    def diarize_audio(self, audio_path: str, session_id: str = None) -> Dict[str, Any]:
         """
         Effectue la diarisation avec Pyannote 4.0.1
         
         Args:
             audio_path: Chemin du fichier audio
+            session_id: ID de la session (optionnel, pour vérifier l'annulation)
             
         Returns:
-            dict: Résultat de la diarisation avec segments et speakers
+            dict: Résultat de la diarisation avec segments et speakers, incluant job_id
         """
         try:
             logger.info(f"Démarrage de la diarisation pour: {audio_path}")
@@ -196,8 +197,12 @@ class RunPodWorker:
             
             logger.info(f"Job RunPod créé avec succès. Job ID: {job_id}")
             
-            # Attente de la complétion
-            result = self._wait_for_completion(job_id)
+            # Attente de la complétion avec vérification d'annulation
+            result = self._wait_for_completion(job_id, session_id=session_id)
+            
+            # Ajouter le job_id au résultat pour référence
+            if isinstance(result, dict):
+                result['job_id'] = job_id
             
             # Format du résultat attendu:
             # {
@@ -282,16 +287,20 @@ class RunPodWorker:
         return merged_segments
     
     
-    def _wait_for_completion(self, job_id: str, max_wait: int = 7200) -> Dict[str, Any]:
+    def _wait_for_completion(self, job_id: str, max_wait: int = 7200, session_id: str = None) -> Dict[str, Any]:
         """
-        Attend la complétion d'un job RunPod
+        Attend la complétion d'un job RunPod avec vérification d'annulation
         
         Args:
             job_id: ID du job
             max_wait: Temps maximum d'attente en secondes
+            session_id: ID de la session (optionnel, pour vérifier l'annulation)
             
         Returns:
             dict: Résultat du job
+            
+        Raises:
+            Exception: Si la session a été annulée
         """
         start_time = time.time()
         # Délai initial pour laisser le job être créé dans le système
@@ -304,6 +313,25 @@ class RunPodWorker:
         
         check_count = 0
         while time.time() - start_time < max_wait:
+            # Vérifier si la session a été annulée (toutes les 6 vérifications, ~30 secondes)
+            if session_id and check_count % 6 == 0:
+                try:
+                    from services.log_manager import LogManager
+                    from config import LOGS_FOLDER
+                    log_manager = LogManager(LOGS_FOLDER)
+                    if log_manager.is_cancelled(session_id):
+                        logger.warning(f"Session {session_id} annulée, arrêt de l'attente du job {job_id}")
+                        # Tenter d'annuler le job RunPod
+                        self.cancel_job(job_id)
+                        raise Exception(f"Traitement annulé par l'utilisateur pour la session {session_id}")
+                except ImportError:
+                    # Si LogManager n'est pas disponible, on continue
+                    pass
+                except Exception as e:
+                    if "annulé" in str(e).lower():
+                        raise
+                    # Autres erreurs, on continue
+            
             check_count += 1
             elapsed_time = int(time.time() - start_time)
             status_url = f"{self.base_url}/status/{job_id}"
@@ -368,4 +396,40 @@ class RunPodWorker:
                 continue
         
         raise TimeoutError(f"Job {job_id} n'a pas terminé dans le délai imparti ({max_wait} secondes)")
+    
+    def cancel_job(self, job_id: str) -> bool:
+        """
+        Annule un job RunPod en cours d'exécution
+        
+        Args:
+            job_id: ID du job à annuler
+            
+        Returns:
+            bool: True si l'annulation a réussi, False sinon
+        """
+        try:
+            # API RunPod pour annuler un job : POST /v2/{endpoint_id}/cancel/{job_id}
+            cancel_url = f"{self.base_url}/cancel/{job_id}"
+            logger.info(f"Tentative d'annulation du job {job_id}...")
+            
+            with runpod_breaker:
+                response = requests.post(
+                    cancel_url,
+                    headers=self.headers,
+                    timeout=30
+                )
+            
+            if response.status_code == 200:
+                logger.info(f"Job {job_id} annulé avec succès")
+                return True
+            elif response.status_code == 404:
+                logger.warning(f"Job {job_id} non trouvé (peut-être déjà terminé)")
+                return False
+            else:
+                logger.error(f"Erreur lors de l'annulation du job {job_id}: {response.status_code} - {response.text}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Erreur lors de l'annulation du job {job_id}: {str(e)}", exc_info=True)
+            return False
 

@@ -234,6 +234,44 @@ Pour plus de détails, voir `runpod_worker/README.md`
 
 ## API Endpoints
 
+### Endpoints principaux
+
+#### `POST /cancel/<session_id>` - Kill Switch (Annulation)
+Annule un traitement en cours d'exécution. Utile pour arrêter un traitement qui dysfonctionne ou qui prend trop de temps.
+
+**Méthode** : `POST`
+
+**Paramètres** :
+- `session_id` : ID de la session à annuler (dans l'URL)
+
+**Réponse** :
+```json
+{
+  "message": "Traitement annulé avec succès",
+  "session_id": "abc123...",
+  "runpod_job_cancelled": true
+}
+```
+
+**Codes de statut** :
+- `200` : Annulation réussie
+- `400` : Traitement déjà terminé/annulé
+- `404` : Session introuvable
+- `500` : Erreur serveur
+
+**Exemple d'utilisation** :
+```bash
+curl -X POST https://votre-domaine.com/cancel/abc123-def456-ghi789
+```
+
+**Comportement** :
+1. Marque la session comme annulée dans le système
+2. Tente d'annuler le job RunPod en cours (si disponible)
+3. Le pipeline vérifie périodiquement l'état d'annulation et s'arrête proprement
+4. Les ressources sont libérées progressivement
+
+**Note** : L'annulation peut prendre quelques secondes à quelques dizaines de secondes selon l'étape en cours (diarisation, transcription, etc.).
+
 ### `POST /upload`
 
 Upload d'un fichier audio et documents contextuels.

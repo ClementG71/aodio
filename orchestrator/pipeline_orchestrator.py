@@ -66,9 +66,19 @@ class PipelineOrchestrator:
             
         Raises:
             TimeoutError: Si la diarisation prend trop de temps
-            Exception: En cas d'erreur critique
+            Exception: En cas d'erreur critique ou d'annulation
         """
         import concurrent.futures
+        
+        # Vérifier si la session est déjà annulée
+        if self.log_manager.is_cancelled(session_id):
+            logger.info(f"Session {session_id} déjà annulée, arrêt de la diarisation")
+            return {
+                'segments': [],
+                'speakers': [],
+                'status': 'cancelled',
+                'message': 'Traitement annulé par l\'utilisateur'
+            }
         
         self.log_manager.log_status(session_id, 'diarization', 'Démarrage de la diarisation avec timeout...')
         
@@ -77,16 +87,37 @@ class PipelineOrchestrator:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as diar_executor:
                 future = diar_executor.submit(
                     self.diarization_service.diarize_audio, 
-                    audio_path
+                    audio_path,
+                    session_id  # Passer session_id pour vérification d'annulation
                 )
                 
                 try:
-                    # Attendre le résultat avec timeout
-                    diarization_result = future.result(timeout=timeout)
-                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée avec succès')
-                    return diarization_result
+                    # Attendre le résultat avec timeout et vérification périodique d'annulation
+                    check_interval = 30  # Vérifier toutes les 30 secondes
+                    elapsed = 0
+                    while elapsed < timeout:
+                        try:
+                            # Vérifier si annulé
+                            if self.log_manager.is_cancelled(session_id):
+                                logger.info(f"Session {session_id} annulée pendant la diarisation")
+                                future.cancel()
+                                # Tenter d'annuler le job RunPod si job_id disponible
+                                return {
+                                    'segments': [],
+                                    'speakers': [],
+                                    'status': 'cancelled',
+                                    'message': 'Traitement annulé par l\'utilisateur'
+                                }
+                            
+                            # Attendre avec timeout partiel
+                            diarization_result = future.result(timeout=min(check_interval, timeout - elapsed))
+                            self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée avec succès')
+                            return diarization_result
+                        except concurrent.futures.TimeoutError:
+                            elapsed += check_interval
+                            continue
                     
-                except concurrent.futures.TimeoutError:
+                    # Timeout global atteint
                     self.log_manager.log_status(session_id, 'diarization', 'Timeout atteint pour la diarisation')
                     logger.warning(f"Diarization timeout après {timeout}s pour la session {session_id}")
                     
@@ -102,6 +133,15 @@ class PipelineOrchestrator:
                     }
                     
         except Exception as e:
+            # Vérifier si c'est une annulation
+            if "annulé" in str(e).lower() or "cancelled" in str(e).lower():
+                return {
+                    'segments': [],
+                    'speakers': [],
+                    'status': 'cancelled',
+                    'message': str(e)
+                }
+            
             error_msg = f"Erreur critique lors de la diarisation: {str(e)}"
             self.log_manager.log_status(session_id, 'diarization', error_msg)
             logger.error(error_msg, exc_info=True)
@@ -123,6 +163,11 @@ class PipelineOrchestrator:
             metadata: Métadonnées de la session
         """
         try:
+            # Vérifier si la session est annulée avant de commencer
+            if self.log_manager.is_cancelled(session_id):
+                logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                return
+            
             self.log_manager.log_status(session_id, 'processing', 'Démarrage du traitement')
             
             # 1. Diarisation et Transcription en parallèle (Text-First)
@@ -145,8 +190,13 @@ class PipelineOrchestrator:
                 # Attente résultats
                 diarization_result = future_diar.result()
                 
+                # Vérifier si la session a été annulée
+                if self.log_manager.is_cancelled(session_id):
+                    logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                    return
+                
                 # Vérifier si la diarisation a réussi
-                if diarization_result.get('status') in ['timeout', 'error']:
+                if diarization_result.get('status') in ['timeout', 'error', 'cancelled']:
                     self.log_manager.log_status(session_id, 'diarization', 'Diarisation en erreur ou timeout', diarization_result)
                     logger.warning(f"Diarization issue: {diarization_result.get('message', 'Unknown error')}")
                     
@@ -157,11 +207,38 @@ class PipelineOrchestrator:
                     }
                 else:
                     self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+                    
+                    # Stocker le job_id dans les métadonnées pour permettre l'annulation
+                    if 'job_id' in diarization_result:
+                        try:
+                            from pathlib import Path
+                            from config import UPLOAD_FOLDER
+                            import json
+                            metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
+                            if metadata_path.exists():
+                                with open(metadata_path, 'r', encoding='utf-8') as f:
+                                    metadata = json.load(f)
+                                metadata['runpod_job_id'] = diarization_result['job_id']
+                                with open(metadata_path, 'w', encoding='utf-8') as f:
+                                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+                        except Exception as e:
+                            logger.warning(f"Impossible de stocker le job_id: {str(e)}")
                 
                 raw_transcription = future_trans.result()
+                
+                # Vérifier si la session a été annulée
+                if self.log_manager.is_cancelled(session_id):
+                    logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                    return
+                
                 self.log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
             
             # 2. Alignement (Fusion)
+            # Vérifier si la session a été annulée avant chaque étape
+            if self.log_manager.is_cancelled(session_id):
+                logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                return
+            
             self.log_manager.log_status(session_id, 'processing', 'Alignement Audio/Texte en cours...')
             
             aligned_segments = self.transcription_service.aligner.align_strict_improved(
@@ -181,6 +258,10 @@ class PipelineOrchestrator:
             self.log_manager.log_status(session_id, 'transcription', 'Transcription alignée et validée', transcription_result)
             
             # 3. Traitement LLM (Full Mistral)
+            if self.log_manager.is_cancelled(session_id):
+                logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                return
+            
             self.log_manager.log_status(session_id, 'llm_processing', 'Démarrage du traitement LLM (Mistral)')
             
             # Mapping des locuteurs (Hybride Spacy + Mistral Small)
@@ -206,6 +287,10 @@ class PipelineOrchestrator:
             self.log_manager.log_status(session_id, 'llm_processing', 'Décisions extraites', decisions)
             
             # 4. Génération des documents
+            if self.log_manager.is_cancelled(session_id):
+                logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                return
+            
             self.log_manager.log_status(session_id, 'document_generation', 'Génération des documents')
             date_seance = metadata.get('date_seance', datetime.now().strftime('%Y-%m-%d'))
             

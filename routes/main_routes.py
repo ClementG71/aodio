@@ -648,6 +648,67 @@ def create_app():
             logger.error(f"Erreur lors de la récupération du statut: {str(e)}")
             return jsonify({'error': str(e)}), 500
     
+    @app.route('/cancel/<session_id>', methods=['POST'])
+    def cancel_processing(session_id):
+        """Annule un traitement en cours (kill switch)"""
+        try:
+            # Vérifier si la session existe
+            status = log_manager.get_status(session_id)
+            if status.get('status') == 'not_found':
+                return jsonify({'error': 'Session introuvable'}), 404
+            
+            # Vérifier si le traitement est déjà terminé
+            if status.get('status') in ['completed', 'cancelled', 'failed']:
+                return jsonify({
+                    'message': f'Traitement déjà {status.get("status")}',
+                    'status': status.get('status')
+                }), 400
+            
+            # Marquer la session comme annulée
+            log_manager.cancel_session(session_id)
+            logger.info(f"Session {session_id} marquée comme annulée")
+            
+            # Tenter d'annuler le job RunPod si disponible
+            job_cancelled = False
+            try:
+                # Récupérer le job_id depuis les métadonnées
+                upload_folder_abs = Path(UPLOAD_FOLDER)
+                metadata_path = upload_folder_abs / session_id / 'metadata.json'
+                
+                if metadata_path.exists():
+                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                        metadata = json.load(f)
+                    
+                    # Le job_id peut être dans metadata ou dans les stages
+                    job_id = metadata.get('runpod_job_id')
+                    if not job_id:
+                        # Chercher dans les stages
+                        for stage in status.get('stages', []):
+                            if stage.get('stage') == 'diarization':
+                                stage_data = stage.get('data', {})
+                                if isinstance(stage_data, dict):
+                                    job_id = stage_data.get('job_id')
+                                    break
+                    
+                    if job_id and runpod_worker:
+                        logger.info(f"Tentative d'annulation du job RunPod {job_id} pour la session {session_id}")
+                        job_cancelled = runpod_worker.cancel_job(job_id)
+                        if job_cancelled:
+                            logger.info(f"Job RunPod {job_id} annulé avec succès")
+            except Exception as e:
+                logger.warning(f"Impossible d'annuler le job RunPod: {str(e)}")
+                # On continue quand même, la session est marquée comme annulée
+            
+            return jsonify({
+                'message': 'Traitement annulé avec succès',
+                'session_id': session_id,
+                'runpod_job_cancelled': job_cancelled
+            }), 200
+            
+        except Exception as e:
+            logger.error(f"Erreur lors de l'annulation: {str(e)}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+    
     @app.route('/download/<session_id>/<document_type>')
     def download_document(session_id, document_type):
         """Télécharge un document généré"""
