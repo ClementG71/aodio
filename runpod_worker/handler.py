@@ -96,22 +96,30 @@ def load_pipeline():
         
         # #region agent log
         log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        debug_msg = {"location":"handler.py:load_pipeline:before_from_pretrained","message":"Avant Pipeline.from_pretrained","data":{"model":DIARIZATION_MODEL},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}
+        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:load_pipeline:before_from_pretrained","message":"Avant Pipeline.from_pretrained","data":{"model":DIARIZATION_MODEL},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+                f.write(json.dumps(debug_msg) + '\n')
         except Exception:
             pass
         # #endregion
         
         # Pipeline.from_pretrained peut prendre plusieurs minutes
         # Il télécharge les modèles (segmentation, embedding, clustering)
+        print("DEBUG: Appel Pipeline.from_pretrained() - cela peut prendre plusieurs minutes...", flush=True)
+        pipeline_start_time = __import__('time').time()
         pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
+        pipeline_load_duration = __import__('time').time() - pipeline_start_time
+        print(f"DEBUG: Pipeline.from_pretrained() terminé en {pipeline_load_duration:.1f}s", flush=True)
         
         # #region agent log
         log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        debug_msg = {"location":"handler.py:load_pipeline:after_from_pretrained","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(pipeline).__name__,"duration":pipeline_load_duration},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}
+        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:load_pipeline:after_from_pretrained","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(pipeline).__name__},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+                f.write(json.dumps(debug_msg) + '\n')
         except Exception:
             pass
         # #endregion
@@ -126,20 +134,30 @@ def load_pipeline():
             
             # #region agent log
             log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+            vram_before = torch.cuda.memory_allocated(0) / 1024**3
+            debug_msg = {"location":"handler.py:load_pipeline:before_to_device","message":"Avant pipeline.to(device)","data":{"device":str(device),"vram_before":vram_before},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}
+            print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
             try:
                 with open(log_path, 'a') as f:
-                    f.write(json.dumps({"location":"handler.py:load_pipeline:before_to_device","message":"Avant pipeline.to(device)","data":{"device":str(device),"vram_before":torch.cuda.memory_allocated(0) / 1024**3},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}) + '\n')
+                    f.write(json.dumps(debug_msg) + '\n')
             except Exception:
                 pass
             # #endregion
             
+            print(f"DEBUG: Déplacement pipeline sur GPU - VRAM avant: {vram_before:.2f} GB", flush=True)
+            to_device_start = __import__('time').time()
             pipeline.to(device)
+            to_device_duration = __import__('time').time() - to_device_start
+            vram_after = torch.cuda.memory_allocated(0) / 1024**3
+            print(f"DEBUG: pipeline.to(device) terminé en {to_device_duration:.1f}s - VRAM après: {vram_after:.2f} GB", flush=True)
             
             # #region agent log
             log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+            debug_msg = {"location":"handler.py:load_pipeline:after_to_device","message":"pipeline.to(device) terminé","data":{"vram_after":vram_after,"duration":to_device_duration},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}
+            print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
             try:
                 with open(log_path, 'a') as f:
-                    f.write(json.dumps({"location":"handler.py:load_pipeline:after_to_device","message":"pipeline.to(device) terminé","data":{"vram_after":torch.cuda.memory_allocated(0) / 1024**3},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}) + '\n')
+                    f.write(json.dumps(debug_msg) + '\n')
             except Exception:
                 pass
             # #endregion
@@ -276,24 +294,33 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
         
         # #region agent log
         log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        debug_msg = {"location":"handler.py:diarize_audio:pipeline_call_start","message":"Appel pipeline() démarré","data":{"timestamp":pipeline_start},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}
+        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:diarize_audio:pipeline_call_start","message":"Appel pipeline() démarré","data":{"timestamp":pipeline_start},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+                f.write(json.dumps(debug_msg) + '\n')
         except Exception:
             pass
         # #endregion
         
+        print("DEBUG: Appel pipeline() - cela peut prendre plusieurs minutes pour un fichier de 21 min...", flush=True)
         if inference_options:
             print(f"Options d'inférence: {inference_options}", flush=True)
             diarization = pipeline(audio_path, **inference_options)
         else:
             diarization = pipeline(audio_path)
         
+        pipeline_call_duration = time.time() - pipeline_start
+        vram_after_call = torch.cuda.memory_allocated(0) / 1024**3 if torch.cuda.is_available() else 0
+        print(f"DEBUG: pipeline() terminé en {pipeline_call_duration:.1f}s - VRAM après: {vram_after_call:.2f} GB", flush=True)
+        
         # #region agent log
         log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+        debug_msg = {"location":"handler.py:diarize_audio:pipeline_call_success","message":"Appel pipeline() terminé","data":{"duration":pipeline_call_duration,"vram_after":vram_after_call},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}
+        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:diarize_audio:pipeline_call_success","message":"Appel pipeline() terminé","data":{"duration":time.time() - pipeline_start,"vram_after":torch.cuda.memory_allocated(0) / 1024**3 if torch.cuda.is_available() else 0},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+                f.write(json.dumps(debug_msg) + '\n')
         except Exception:
             pass
         # #endregion
