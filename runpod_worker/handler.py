@@ -109,7 +109,44 @@ def load_pipeline():
         # Il télécharge les modèles (segmentation, embedding, clustering)
         print("DEBUG: Appel Pipeline.from_pretrained() - cela peut prendre plusieurs minutes...", flush=True)
         pipeline_start_time = __import__('time').time()
-        pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
+        
+        # Ajouter un timeout pour éviter un blocage infini
+        # Utiliser un thread avec timeout pour détecter les blocages
+        import threading
+        import queue
+        result_queue = queue.Queue()
+        error_queue = queue.Queue()
+        
+        def load_pipeline_thread():
+            try:
+                result = Pipeline.from_pretrained(DIARIZATION_MODEL)
+                result_queue.put(result)
+            except Exception as e:
+                error_queue.put(e)
+        
+        load_thread = threading.Thread(target=load_pipeline_thread, daemon=True)
+        load_thread.start()
+        
+        # Attendre avec timeout (30 minutes max pour télécharger les modèles)
+        timeout_seconds = 1800
+        load_thread.join(timeout=timeout_seconds)
+        
+        if load_thread.is_alive():
+            error_msg = f"Pipeline.from_pretrained() a dépassé le timeout de {timeout_seconds}s - probable blocage réseau ou mémoire"
+            print(f"ERROR: {error_msg}", flush=True)
+            raise TimeoutError(error_msg)
+        
+        if not error_queue.empty():
+            error = error_queue.get()
+            print(f"ERROR: Erreur lors du chargement du pipeline: {error}", flush=True)
+            raise error
+        
+        if result_queue.empty():
+            error_msg = "Pipeline.from_pretrained() s'est terminé sans résultat ni erreur - état inattendu"
+            print(f"ERROR: {error_msg}", flush=True)
+            raise RuntimeError(error_msg)
+        
+        pipeline = result_queue.get()
         pipeline_load_duration = __import__('time').time() - pipeline_start_time
         print(f"DEBUG: Pipeline.from_pretrained() terminé en {pipeline_load_duration:.1f}s", flush=True)
         
