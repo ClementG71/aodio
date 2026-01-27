@@ -41,13 +41,20 @@ try:
     
     # Précharger le pipeline (télécharge tous les modèles dans le cache Hugging Face)
     # H3: Vérifier que le préchargement fonctionne
-    from huggingface_hub.utils import HfFolder
-    cache_dir_before = HfFolder.get_cache_dir()
+    try:
+        from huggingface_hub import hf_hub_cache_dir
+        cache_dir_before = hf_hub_cache_dir()
+    except ImportError:
+        cache_dir_before = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
     print(f"Cache Hugging Face avant: {cache_dir_before}")
     
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
     
-    cache_dir_after = HfFolder.get_cache_dir()
+    try:
+        from huggingface_hub import hf_hub_cache_dir
+        cache_dir_after = hf_hub_cache_dir()
+    except ImportError:
+        cache_dir_after = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
     model_cache_path = os.path.join(cache_dir_after, 'hub', 'models--pyannote--speaker-diarization-3.1')
     
     print("Modèle préchargé avec succès!")

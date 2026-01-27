@@ -186,8 +186,13 @@ def load_pipeline():
                     try:
                         # H4: Vérifier la progression du téléchargement
                         import requests
-                        from huggingface_hub.utils import HfFolder
-                        cache_dir = HfFolder.get_cache_dir()
+                        # Utiliser la méthode moderne pour obtenir le cache dir
+                        try:
+                            from huggingface_hub import hf_hub_cache_dir
+                            cache_dir = hf_hub_cache_dir()
+                        except ImportError:
+                            # Fallback pour versions plus anciennes
+                            cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
                         # #region agent log
                         try:
                             with open(log_path, 'a') as f:
@@ -231,8 +236,11 @@ def load_pipeline():
                         try:
                             with open(log_path, 'a') as f:
                                 # Vérifier si des fichiers sont en cours de téléchargement
-                                from huggingface_hub.utils import HfFolder
-                                cache_dir = HfFolder.get_cache_dir()
+                                try:
+                                    from huggingface_hub import hf_hub_cache_dir
+                                    cache_dir = hf_hub_cache_dir()
+                                except ImportError:
+                                    cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
                                 model_cache_path = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
                                 cache_files = []
                                 if os.path.exists(model_cache_path):
