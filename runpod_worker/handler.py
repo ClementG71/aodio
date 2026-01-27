@@ -117,17 +117,56 @@ def load_pipeline():
         # Essayer d'abord avec local_files_only=True si les modèles sont en cache
         # Sinon, télécharger normalement (mais avec timeout)
         try:
-            # Vérifier si le cache existe
+            # Vérifier si le cache existe - H2: Vérifier tous les chemins possibles
             from huggingface_hub import snapshot_download
-            cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
-            model_cache = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
+            import pathlib
             
-            if os.path.exists(model_cache):
-                print(f"DEBUG: Cache Hugging Face trouvé: {model_cache}", flush=True)
+            # H2: Vérifier plusieurs chemins de cache possibles
+            cache_paths = [
+                os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface')),
+                os.path.expanduser('~/.cache/huggingface'),
+                '/root/.cache/huggingface',
+                os.getenv('TRANSFORMERS_CACHE'),
+                os.getenv('HF_HOME'),
+            ]
+            
+            # #region agent log
+            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
+            try:
+                with open(log_path, 'a') as f:
+                    f.write(json.dumps({"location":"handler.py:load_pipeline:cache_check","message":"Vérification des chemins de cache","data":{"cache_paths":cache_paths,"HF_HOME":os.getenv('HF_HOME'),"user_home":os.path.expanduser('~')},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+            except Exception:
+                pass
+            # #endregion
+            
+            model_cache_found = None
+            for cache_dir in cache_paths:
+                if cache_dir:
+                    model_cache = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
+                    if os.path.exists(model_cache):
+                        model_cache_found = model_cache
+                        # #region agent log
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps({"location":"handler.py:load_pipeline:cache_found","message":"Cache trouvé","data":{"cache_path":model_cache,"files":os.listdir(model_cache) if os.path.isdir(model_cache) else []},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+                        except Exception:
+                            pass
+                        # #endregion
+                        break
+            
+            if model_cache_found:
+                print(f"DEBUG: Cache Hugging Face trouvé: {model_cache_found}", flush=True)
                 print("DEBUG: Chargement depuis le cache local (rapide)...", flush=True)
                 # Les modèles sont en cache, chargement rapide
                 pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, local_files_only=False)
             else:
+                # #region agent log
+                try:
+                    with open(log_path, 'a') as f:
+                        f.write(json.dumps({"location":"handler.py:load_pipeline:cache_not_found","message":"Cache non trouvé, liste des répertoires vérifiés","data":{"checked_paths":[os.path.join(cd, 'hub', 'models--pyannote--speaker-diarization-3.1') for cd in cache_paths if cd]},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
+                except Exception:
+                    pass
+                # #endregion
                 print("DEBUG: Cache non trouvé, téléchargement depuis Hugging Face...", flush=True)
                 # Ajouter un timeout pour éviter un blocage infini
                 import threading
@@ -136,10 +175,43 @@ def load_pipeline():
                 error_queue = queue.Queue()
                 
                 def load_pipeline_thread():
+                    # #region agent log
+                    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
                     try:
+                        with open(log_path, 'a') as f:
+                            f.write(json.dumps({"location":"handler.py:load_pipeline_thread:start","message":"Thread de téléchargement démarré","data":{"model":DIARIZATION_MODEL},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
+                    except Exception:
+                        pass
+                    # #endregion
+                    try:
+                        # H4: Vérifier la progression du téléchargement
+                        import requests
+                        from huggingface_hub.utils import HfFolder
+                        cache_dir = HfFolder.get_cache_dir()
+                        # #region agent log
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:before_download","message":"Avant Pipeline.from_pretrained","data":{"cache_dir":cache_dir,"HF_HOME":os.getenv('HF_HOME')},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
+                        except Exception:
+                            pass
+                        # #endregion
                         result = Pipeline.from_pretrained(DIARIZATION_MODEL)
+                        # #region agent log
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:after_download","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(result).__name__},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
+                        except Exception:
+                            pass
+                        # #endregion
                         result_queue.put(result)
                     except Exception as e:
+                        # #region agent log
+                        try:
+                            with open(log_path, 'a') as f:
+                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:error","message":"Erreur dans le thread","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
+                        except Exception:
+                            pass
+                        # #endregion
                         error_queue.put(e)
                 
                 load_thread = threading.Thread(target=load_pipeline_thread, daemon=True)
@@ -147,7 +219,36 @@ def load_pipeline():
                 
                 # Attendre avec timeout (30 minutes max pour télécharger les modèles)
                 timeout_seconds = 1800
-                load_thread.join(timeout=timeout_seconds)
+                check_interval = 60  # Vérifier toutes les 60 secondes
+                elapsed = 0
+                
+                # H4: Vérifier la progression du téléchargement
+                while elapsed < timeout_seconds and load_thread.is_alive():
+                    load_thread.join(timeout=min(check_interval, timeout_seconds - elapsed))
+                    elapsed += check_interval
+                    if load_thread.is_alive():
+                        # #region agent log
+                        try:
+                            with open(log_path, 'a') as f:
+                                # Vérifier si des fichiers sont en cours de téléchargement
+                                from huggingface_hub.utils import HfFolder
+                                cache_dir = HfFolder.get_cache_dir()
+                                model_cache_path = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
+                                cache_files = []
+                                if os.path.exists(model_cache_path):
+                                    try:
+                                        for root, dirs, files in os.walk(model_cache_path):
+                                            cache_files.extend([os.path.join(root, f) for f in files[:10]])  # Limiter à 10 fichiers
+                                    except Exception:
+                                        pass
+                                f.write(json.dumps({"location":"handler.py:load_pipeline:progress_check","message":"Vérification progression téléchargement","data":{"elapsed":elapsed,"timeout":timeout_seconds,"cache_dir":cache_dir,"cache_exists":os.path.exists(model_cache_path),"cache_files_count":len(cache_files),"sample_files":cache_files[:3]},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
+                        except Exception:
+                            pass
+                        # #endregion
+                        print(f"DEBUG: Téléchargement en cours... ({elapsed}s/{timeout_seconds}s)", flush=True)
+                
+                if load_thread.is_alive():
+                    load_thread.join(timeout=0)  # Ne pas attendre plus
                 
                 if load_thread.is_alive():
                     error_msg = f"Pipeline.from_pretrained() a dépassé le timeout de {timeout_seconds}s - probable blocage réseau ou mémoire. Les modèles devraient être préchargés dans le Dockerfile."
@@ -170,7 +271,7 @@ def load_pipeline():
         except Exception as e:
             # Si local_files_only échoue, essayer le téléchargement normal
             print(f"DEBUG: Erreur avec cache local, tentative téléchargement normal: {e}", flush=True)
-            pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
+        pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
         
         pipeline_load_duration = __import__('time').time() - pipeline_start_time
         print(f"DEBUG: Pipeline.from_pretrained() terminé en {pipeline_load_duration:.1f}s", flush=True)

@@ -45,11 +45,15 @@ COPY runpod_worker/preload_models.py ./preload_models.py
 # Précharger les modèles Pyannote lors de la construction
 # Le token HF_TOKEN doit être passé comme build arg
 # Note: Les modèles seront mis en cache dans ~/.cache/huggingface
+# H1: Vérifier que le cache persiste après le build
 ARG HF_TOKEN
 RUN if [ -n "$HF_TOKEN" ]; then \
         echo "Préchargement des modèles Pyannote avec HF_TOKEN..." && \
         python preload_models.py "$HF_TOKEN" && \
-        echo "Modèles préchargés avec succès"; \
+        echo "Modèles préchargés avec succès" && \
+        echo "Vérification de la persistance du cache..." && \
+        ls -la ~/.cache/huggingface/hub/ 2>/dev/null | head -20 || echo "Cache non trouvé dans ~/.cache" && \
+        find /root/.cache -name "*pyannote*" -type d 2>/dev/null | head -5 || echo "Aucun répertoire pyannote trouvé"; \
     else \
         echo "WARNING: HF_TOKEN non fourni, les modèles seront téléchargés au runtime (peut causer des blocages)"; \
     fi

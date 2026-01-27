@@ -40,10 +40,33 @@ try:
     ])
     
     # Précharger le pipeline (télécharge tous les modèles dans le cache Hugging Face)
+    # H3: Vérifier que le préchargement fonctionne
+    from huggingface_hub.utils import HfFolder
+    cache_dir_before = HfFolder.get_cache_dir()
+    print(f"Cache Hugging Face avant: {cache_dir_before}")
+    
     pipeline = Pipeline.from_pretrained("pyannote/speaker-diarization-3.1")
     
+    cache_dir_after = HfFolder.get_cache_dir()
+    model_cache_path = os.path.join(cache_dir_after, 'hub', 'models--pyannote--speaker-diarization-3.1')
+    
     print("Modèle préchargé avec succès!")
-    print(f"Cache Hugging Face: {os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))}")
+    print(f"Cache Hugging Face: {cache_dir_after}")
+    print(f"Chemin du modèle: {model_cache_path}")
+    print(f"Modèle existe: {os.path.exists(model_cache_path)}")
+    
+    # H3: Lister les fichiers du cache pour vérifier
+    if os.path.exists(model_cache_path):
+        print(f"Fichiers dans le cache:")
+        for root, dirs, files in os.walk(model_cache_path):
+            level = root.replace(model_cache_path, '').count(os.sep)
+            indent = ' ' * 2 * level
+            print(f"{indent}{os.path.basename(root)}/")
+            subindent = ' ' * 2 * (level + 1)
+            for file in files[:5]:  # Limiter à 5 fichiers par répertoire
+                print(f"{subindent}{file}")
+            if len(files) > 5:
+                print(f"{subindent}... et {len(files) - 5} autres fichiers")
     
     # Vérifier que le pipeline est bien chargé
     print(f"Type du pipeline: {type(pipeline)}")
