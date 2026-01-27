@@ -1,7 +1,8 @@
 # Dockerfile pour RunPod Worker - pyannote.audio 4.0.2
 # Image CUDA de base SANS PyTorch pré-installé
 # Pyannote gère ses propres dépendances torch/torchaudio/torchvision
-FROM nvidia/cuda:12.1.0-runtime-ubuntu22.04
+# Utilisation d'une image CUDA plus récente (12.4) pour éviter les dépréciations
+FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
 # Force l'affichage immédiat des logs
 ENV PYTHONUNBUFFERED=1

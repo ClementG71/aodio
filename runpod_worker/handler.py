@@ -1,6 +1,6 @@
 """
 Worker RunPod pour la diarisation avec Pyannote 4.0.2
-PyTorch 2.5.0 + CUDA 12.1 (versions stables)
+PyTorch 2.8.0 + CUDA 12.4 (versions compatibles)
 """
 import sys
 import traceback
@@ -46,9 +46,12 @@ def load_pipeline():
     Charge le pipeline Pyannote de manière lazy (au premier appel)
     """
     global pipeline
+    import os  # Import local pour éviter UnboundLocalError
+    import sys
+    import json
+    import time
     
     # #region agent log
-    import json
     log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
     try:
         with open(log_path, 'a') as f:
@@ -116,7 +119,6 @@ def load_pipeline():
         try:
             # Vérifier si le cache existe
             from huggingface_hub import snapshot_download
-            import os
             cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
             model_cache = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
             
@@ -270,8 +272,12 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     Effectue la diarisation avec Pyannote
     Supporte les paramètres min_speakers et max_speakers
     """
-    # #region agent log
+    import os  # Import local pour éviter UnboundLocalError
+    import sys
+    import time
     import json
+    
+    # #region agent log
     log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
     try:
         with open(log_path, 'a') as f:
@@ -280,7 +286,6 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
         pass
     # #endregion
     
-    import time
     start_time = time.time()
     
     # #region agent log
@@ -339,7 +344,6 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
     sys.stdout.flush()
     
     # #region agent log
-    import json
     log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
     try:
         with open(log_path, 'a') as f:
