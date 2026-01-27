@@ -2,19 +2,48 @@
 
 Ce dossier contient le code du worker RunPod pour la diarisation avec Pyannote.
 
-## Structure
+## ⚠️ IMPORTANT : Préchargement des modèles
+
+**Les modèles Pyannote doivent être préchargés lors de la construction de l'image Docker** pour éviter les blocages de 30+ minutes lors du téléchargement.
+
+### Construction avec préchargement (RECOMMANDÉ)
+
+```bash
+docker build \
+  --build-arg HF_TOKEN=votre_token_huggingface \
+  -f runpod_worker/Dockerfile.runpod \
+  -t votre-image:tag \
+  .
+```
+
+**Note** : Le `HF_TOKEN` est requis pour accéder aux modèles Pyannote sur Hugging Face. Sans ce token, les modèles seront téléchargés au runtime, ce qui peut causer des blocages.
+
+### Structure
 
 ```
 runpod_worker/
 ├── handler.py          # Code principal du worker
+├── preload_models.py   # Script de préchargement des modèles
 ├── requirements.txt    # Dépendances Python
-├── Dockerfile         # Image Docker (optionnel)
+├── Dockerfile.runpod   # Image Docker avec préchargement
 └── README.md          # Ce fichier
 ```
 
 ## Déploiement
 
-Voir `../RUNPOD_SETUP.md` pour les instructions complètes de déploiement.
+1. **Construire l'image avec préchargement** :
+   ```bash
+   docker build --build-arg HF_TOKEN=$HF_TOKEN -f runpod_worker/Dockerfile.runpod -t votre-registry/runpod-worker:latest .
+   ```
+
+2. **Pousser l'image** :
+   ```bash
+   docker push votre-registry/runpod-worker:latest
+   ```
+
+3. **Configurer l'endpoint RunPod** avec cette image
+
+4. **Configurer la variable d'environnement `HF_TOKEN`** dans l'endpoint RunPod
 
 ## Test local (optionnel)
 

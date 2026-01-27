@@ -38,6 +38,21 @@ RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
     python -c "import torch; print(f'Torch version: {torch.__version__}'); import pyannote.audio; print('Pyannote OK')"
 
+# Copier le script de préchargement
+COPY runpod_worker/preload_models.py ./preload_models.py
+
+# Précharger les modèles Pyannote lors de la construction
+# Le token HF_TOKEN doit être passé comme build arg
+# Note: Les modèles seront mis en cache dans ~/.cache/huggingface
+ARG HF_TOKEN
+RUN if [ -n "$HF_TOKEN" ]; then \
+        echo "Préchargement des modèles Pyannote avec HF_TOKEN..." && \
+        python preload_models.py "$HF_TOKEN" && \
+        echo "Modèles préchargés avec succès"; \
+    else \
+        echo "WARNING: HF_TOKEN non fourni, les modèles seront téléchargés au runtime (peut causer des blocages)"; \
+    fi
+
 # Copier le handler
 COPY runpod_worker/handler.py ./handler.py
 

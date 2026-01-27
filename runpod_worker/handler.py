@@ -106,47 +106,70 @@ def load_pipeline():
         # #endregion
         
         # Pipeline.from_pretrained peut prendre plusieurs minutes
-        # Il télécharge les modèles (segmentation, embedding, clustering)
-        print("DEBUG: Appel Pipeline.from_pretrained() - cela peut prendre plusieurs minutes...", flush=True)
+        # Si les modèles sont préchargés dans le Dockerfile, cela devrait être rapide (< 10s)
+        # Sinon, cela télécharge les modèles (peut bloquer)
+        print("DEBUG: Appel Pipeline.from_pretrained() - utilisation du cache Hugging Face si disponible...", flush=True)
         pipeline_start_time = __import__('time').time()
         
-        # Ajouter un timeout pour éviter un blocage infini
-        # Utiliser un thread avec timeout pour détecter les blocages
-        import threading
-        import queue
-        result_queue = queue.Queue()
-        error_queue = queue.Queue()
+        # Essayer d'abord avec local_files_only=True si les modèles sont en cache
+        # Sinon, télécharger normalement (mais avec timeout)
+        try:
+            # Vérifier si le cache existe
+            from huggingface_hub import snapshot_download
+            import os
+            cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
+            model_cache = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
+            
+            if os.path.exists(model_cache):
+                print(f"DEBUG: Cache Hugging Face trouvé: {model_cache}", flush=True)
+                print("DEBUG: Chargement depuis le cache local (rapide)...", flush=True)
+                # Les modèles sont en cache, chargement rapide
+                pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, local_files_only=False)
+            else:
+                print("DEBUG: Cache non trouvé, téléchargement depuis Hugging Face...", flush=True)
+                # Ajouter un timeout pour éviter un blocage infini
+                import threading
+                import queue
+                result_queue = queue.Queue()
+                error_queue = queue.Queue()
+                
+                def load_pipeline_thread():
+                    try:
+                        result = Pipeline.from_pretrained(DIARIZATION_MODEL)
+                        result_queue.put(result)
+                    except Exception as e:
+                        error_queue.put(e)
+                
+                load_thread = threading.Thread(target=load_pipeline_thread, daemon=True)
+                load_thread.start()
+                
+                # Attendre avec timeout (30 minutes max pour télécharger les modèles)
+                timeout_seconds = 1800
+                load_thread.join(timeout=timeout_seconds)
+                
+                if load_thread.is_alive():
+                    error_msg = f"Pipeline.from_pretrained() a dépassé le timeout de {timeout_seconds}s - probable blocage réseau ou mémoire. Les modèles devraient être préchargés dans le Dockerfile."
+                    print(f"ERROR: {error_msg}", flush=True)
+                    raise TimeoutError(error_msg)
+                
+                if not error_queue.empty():
+                    error = error_queue.get()
+                    print(f"ERROR: Erreur lors du chargement du pipeline: {error}", flush=True)
+                    raise error
+                
+                if result_queue.empty():
+                    error_msg = "Pipeline.from_pretrained() s'est terminé sans résultat ni erreur - état inattendu"
+                    print(f"ERROR: {error_msg}", flush=True)
+                    raise RuntimeError(error_msg)
+                
+                pipeline = result_queue.get()
+        except TimeoutError:
+            raise
+        except Exception as e:
+            # Si local_files_only échoue, essayer le téléchargement normal
+            print(f"DEBUG: Erreur avec cache local, tentative téléchargement normal: {e}", flush=True)
+            pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
         
-        def load_pipeline_thread():
-            try:
-                result = Pipeline.from_pretrained(DIARIZATION_MODEL)
-                result_queue.put(result)
-            except Exception as e:
-                error_queue.put(e)
-        
-        load_thread = threading.Thread(target=load_pipeline_thread, daemon=True)
-        load_thread.start()
-        
-        # Attendre avec timeout (30 minutes max pour télécharger les modèles)
-        timeout_seconds = 1800
-        load_thread.join(timeout=timeout_seconds)
-        
-        if load_thread.is_alive():
-            error_msg = f"Pipeline.from_pretrained() a dépassé le timeout de {timeout_seconds}s - probable blocage réseau ou mémoire"
-            print(f"ERROR: {error_msg}", flush=True)
-            raise TimeoutError(error_msg)
-        
-        if not error_queue.empty():
-            error = error_queue.get()
-            print(f"ERROR: Erreur lors du chargement du pipeline: {error}", flush=True)
-            raise error
-        
-        if result_queue.empty():
-            error_msg = "Pipeline.from_pretrained() s'est terminé sans résultat ni erreur - état inattendu"
-            print(f"ERROR: {error_msg}", flush=True)
-            raise RuntimeError(error_msg)
-        
-        pipeline = result_queue.get()
         pipeline_load_duration = __import__('time').time() - pipeline_start_time
         print(f"DEBUG: Pipeline.from_pretrained() terminé en {pipeline_load_duration:.1f}s", flush=True)
         
