@@ -1,7 +1,5 @@
-"""
-Dépendances du worker RunPod pour la diarisation avec Pyannote 2.1.
-Pyannote.audio 2.x gère ses propres dépendances torch/torchaudio/torchvision.
-"""
+# Dépendances du worker RunPod pour la diarisation avec Pyannote 2.1.
+# Pyannote.audio 2.x gère ses propres dépendances torch/torchaudio/torchvision.
 
 # Utilitaires RunPod
 runpod>=1.0.0
