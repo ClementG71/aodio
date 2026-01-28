@@ -1,28 +1,19 @@
-# Dockerfile pour RunPod Worker - pyannote.audio 4.0.2
+# Dockerfile pour RunPod Worker - pyannote.audio 2.1.x
 # Image CUDA de base SANS PyTorch pré-installé
-# Pyannote gère ses propres dépendances torch/torchaudio/torchvision
-# Utilisation d'une image CUDA plus récente (12.4) pour éviter les dépréciations
+# Pyannote 2.x gère ses propres dépendances torch/torchaudio/torchvision
+# Utilisation d'une image CUDA récente (12.4) pour éviter les dépréciations
 FROM nvidia/cuda:12.4.0-runtime-ubuntu22.04
 
 # Force l'affichage immédiat des logs
 ENV PYTHONUNBUFFERED=1
 ENV DEBIAN_FRONTEND=noninteractive
-# Permettre le chargement des anciens modèles PyTorch (changement de sécurité dans torch 2.6+)
-ENV TORCH_FORCE_WEIGHTS_ONLY_LOAD=0
-
-# Installer Python 3.11 et dépendances système complètes pour FFmpeg/TorchCodec
+# Installer Python 3.11 et dépendances système de base pour l'audio
 RUN apt-get update && apt-get install -y \
     python3.11 \
     python3.11-venv \
     python3-pip \
     ffmpeg \
     libsndfile1 \
-    libavutil-dev \
-    libavcodec-dev \
-    libavformat-dev \
-    libswscale-dev \
-    libavfilter-dev \
-    libavdevice-dev \
     && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/python3.11 /usr/bin/python \
     && ln -sf /usr/bin/python3.11 /usr/bin/python3
@@ -38,25 +29,6 @@ COPY runpod_worker/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
     pip install --no-cache-dir -r requirements.txt && \
     python -c "import torch; print(f'Torch version: {torch.__version__}'); import pyannote.audio; print('Pyannote OK')"
-
-# Copier le script de préchargement
-COPY runpod_worker/preload_models.py ./preload_models.py
-
-# Précharger les modèles Pyannote lors de la construction
-# Le token HF_TOKEN doit être passé comme build arg
-# Note: Les modèles seront mis en cache dans ~/.cache/huggingface
-# H1: Vérifier que le cache persiste après le build
-ARG HF_TOKEN
-RUN if [ -n "$HF_TOKEN" ]; then \
-        echo "Préchargement des modèles Pyannote avec HF_TOKEN..." && \
-        python preload_models.py "$HF_TOKEN" && \
-        echo "Modèles préchargés avec succès" && \
-        echo "Vérification de la persistance du cache..." && \
-        ls -la ~/.cache/huggingface/hub/ 2>/dev/null | head -20 || echo "Cache non trouvé dans ~/.cache" && \
-        find /root/.cache -name "*pyannote*" -type d 2>/dev/null | head -5 || echo "Aucun répertoire pyannote trouvé"; \
-    else \
-        echo "WARNING: HF_TOKEN non fourni, les modèles seront téléchargés au runtime (peut causer des blocages)"; \
-    fi
 
 # Copier le handler
 COPY runpod_worker/handler.py ./handler.py

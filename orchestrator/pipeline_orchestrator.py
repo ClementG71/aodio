@@ -167,6 +167,16 @@ class PipelineOrchestrator:
                 logger.info(f"Session {session_id} annulée, arrêt du pipeline")
                 return
             
+            # Log structuré du début de pipeline
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "pipeline",
+                "event": "start",
+                "message": "Démarrage du pipeline complet",
+                "data": {"audio_file": metadata.get("audio_file")},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
+            
             self.log_manager.log_status(session_id, 'processing', 'Démarrage du traitement')
             
             # 1. Diarisation et Transcription en parallèle (Text-First)
@@ -206,6 +216,14 @@ class PipelineOrchestrator:
                     }
                 else:
                     self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+                    logger.info(json.dumps({
+                        "session_id": session_id,
+                        "stage": "diarization",
+                        "event": "end",
+                        "message": "Diarisation terminée",
+                        "data": {"segments": len(diarization_result.get("segments", []))},
+                        "timestamp": datetime.utcnow().isoformat(),
+                    }))
                     
                     # Stocker le job_id dans les métadonnées pour permettre l'annulation
                     if 'job_id' in diarization_result:
@@ -231,6 +249,14 @@ class PipelineOrchestrator:
                     return
                 
                 self.log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
+                logger.info(json.dumps({
+                    "session_id": session_id,
+                    "stage": "transcription",
+                    "event": "end_raw",
+                    "message": "Transcription brute terminée",
+                    "data": {"segments": len(raw_transcription.get("segments", []))},
+                    "timestamp": datetime.utcnow().isoformat(),
+                }))
             
             # 2. Alignement (Fusion)
             # Vérifier si la session a été annulée avant chaque étape
@@ -255,6 +281,14 @@ class PipelineOrchestrator:
                 "full_text": raw_transcription.get('full_text', '')
             }
             self.log_manager.log_status(session_id, 'transcription', 'Transcription alignée et validée', transcription_result)
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "alignment",
+                "event": "end",
+                "message": "Alignement transcription/diarisation terminé",
+                "data": {"segments": len(aligned_segments)},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # 3. Traitement LLM (Full Mistral)
             if self.log_manager.is_cancelled(session_id):
@@ -262,6 +296,13 @@ class PipelineOrchestrator:
                 return
             
             self.log_manager.log_status(session_id, 'llm_processing', 'Démarrage du traitement LLM (Mistral)')
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "llm_processing",
+                "event": "start",
+                "message": "Démarrage du mapping des locuteurs (LLM)",
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # Mapping des locuteurs (Hybride Spacy + Mistral Small)
             speaker_mapping = self.llm_speaker_mapper.map_speakers(
@@ -270,13 +311,83 @@ class PipelineOrchestrator:
                 metadata.get('president_seance')
             )
             self.log_manager.log_status(session_id, 'llm_processing', 'Mapping des locuteurs terminé', speaker_mapping)
-            
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "llm_processing",
+                "event": "mapping_done",
+                "message": "Mapping des locuteurs terminé",
+                "data": {"mapped_speakers": len(speaker_mapping)},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
+
+            # Récupérer les scores de confiance éventuellement ajoutés par MistralProcessor
+            confidence_scores = transcription_result.get('_speaker_confidence', {}) or {}
+
+            # Sauvegarder dans les métadonnées pour la validation humaine éventuelle
+            metadata['transcription'] = transcription_result
+            metadata['speaker_mapping'] = speaker_mapping
+            metadata['speaker_confidence'] = confidence_scores
+
+            metadata_path = Path(os.getenv('UPLOAD_FOLDER', 'uploads')) / session_id / 'metadata.json'
+            try:
+                with open(metadata_path, 'w', encoding='utf-8') as f:
+                    json.dump(metadata, f, ensure_ascii=False, indent=2)
+            except Exception as e:
+                logger.warning(f"Impossible de mettre à jour metadata.json après mapping des locuteurs: {e}")
+
+            # Déterminer les speakers nécessitant une validation humaine
+            all_speakers = sorted({
+                s.get('speaker')
+                for s in transcription_result.get('segments', [])
+                if s.get('speaker') and str(s.get('speaker')).startswith('SPEAKER_')
+            })
+            unidentified = [s for s in all_speakers if s not in speaker_mapping]
+            low_confidence = [
+                s for s, c in confidence_scores.items()
+                if c < 0.7 and s in all_speakers and s not in unidentified
+            ]
+
+            if unidentified or low_confidence:
+                # Mettre à jour le statut et arrêter le pipeline ici
+                self.log_manager.update_status(session_id, 'validation_pending', {
+                    'unidentified_speakers': unidentified,
+                    'low_confidence_speakers': low_confidence,
+                    'speaker_mapping': speaker_mapping,
+                })
+                logger.info(json.dumps({
+                    "session_id": session_id,
+                    "stage": "validation",
+                    "event": "pending",
+                    "message": "Validation humaine requise avant génération des documents",
+                    "data": {"unidentified": unidentified, "low_confidence": low_confidence},
+                    "timestamp": datetime.utcnow().isoformat(),
+                }))
+
+                metadata['status'] = 'validation_pending'
+                try:
+                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                        json.dump(metadata, f, ensure_ascii=False, indent=2)
+                except Exception as e:
+                    logger.warning(f"Impossible de mettre à jour metadata.json en validation_pending: {e}")
+
+                return {
+                    'status': 'validation_pending',
+                    'session_id': session_id,
+                }
+
             # Génération du pré-compte rendu (Mistral Large)
             pre_cr = self.llm_speaker_mapper.generate_pre_compte_rendu(
                 transcription_result.get('full_text', ''),
                 speaker_mapping
             )
             self.log_manager.log_status(session_id, 'llm_processing', 'Pré-compte rendu généré')
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "llm_processing",
+                "event": "pre_cr_generated",
+                "message": "Pré-compte rendu généré",
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # Extraction des décisions (Mistral Large)
             decisions = self.llm_speaker_mapper.extract_decisions(
@@ -284,6 +395,14 @@ class PipelineOrchestrator:
                 speaker_mapping
             )
             self.log_manager.log_status(session_id, 'llm_processing', 'Décisions extraites', decisions)
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "llm_processing",
+                "event": "decisions_extracted",
+                "message": "Décisions extraites",
+                "data": {"decisions_count": len(decisions) if isinstance(decisions, list) else 0},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # 4. Génération des documents
             if self.log_manager.is_cancelled(session_id):
@@ -291,6 +410,13 @@ class PipelineOrchestrator:
                 return
             
             self.log_manager.log_status(session_id, 'document_generation', 'Génération des documents')
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "document_generation",
+                "event": "start",
+                "message": "Génération des documents",
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             date_seance = metadata.get('date_seance', datetime.now().strftime('%Y-%m-%d'))
             
             documents = self.document_generator.generate_all_documents(
@@ -304,6 +430,14 @@ class PipelineOrchestrator:
             )
             
             self.log_manager.log_status(session_id, 'completed', 'Traitement terminé avec succès', documents)
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "document_generation",
+                "event": "end",
+                "message": "Documents générés avec succès",
+                "data": {"documents": list(documents.keys())},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # Mise à jour des métadonnées
             metadata['status'] = 'completed'

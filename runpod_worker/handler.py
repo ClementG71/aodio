@@ -1,6 +1,6 @@
 """
-Worker RunPod pour la diarisation avec Pyannote 4.0.2
-PyTorch 2.8.0 + CUDA 12.4 (versions compatibles)
+Worker RunPod pour la diarisation avec Pyannote 2.1.x
+Pyannote 2.x + PyTorch (version gérée par pyannote.audio)
 """
 import sys
 import traceback
@@ -35,327 +35,105 @@ except Exception as e:
     sys.exit(1)
 
 # Configuration
-DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
+DIARIZATION_MODEL = "pyannote/speaker-diarization"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Initialisation du pipeline (chargé une seule fois au démarrage)
 pipeline = None
 
+
 def load_pipeline():
     """
-    Charge le pipeline Pyannote de manière lazy (au premier appel)
+    Charge le pipeline Pyannote de manière lazy (au premier appel).
+    Version simplifiée pour Pyannote 2.1.x : pas de gestion avancée de cache ou de timeout.
     """
     global pipeline
     import os  # Import local pour éviter UnboundLocalError
-    import sys
     import json
     import time
-    
+
     # #region agent log
     log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
     try:
         with open(log_path, 'a') as f:
-            f.write(json.dumps({"location":"handler.py:load_pipeline:entry","message":"load_pipeline appelé","data":{"pipeline_exists":pipeline is not None},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
+            f.write(json.dumps({
+                "location": "handler.py:load_pipeline:entry",
+                "message": "load_pipeline appelé",
+                "data": {"pipeline_exists": pipeline is not None},
+                "timestamp": time.time(),
+                "sessionId": "debug-session",
+                "runId": "run1",
+                "hypothesisId": "H2"
+            }) + '\n')
     except Exception:
-        pass  # Ignore les erreurs de log en production
+        pass
     # #endregion
+
     if pipeline is not None:
-        # #region agent log
-        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-        try:
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:load_pipeline:early_return","message":"Pipeline déjà chargé, retour immédiat","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
-        except Exception:
-            pass
-        # #endregion
         return pipeline
-    
-    print("Chargement du modèle Pyannote 4.0...")
-    
-    if HF_TOKEN:
+
+    print("Chargement du modèle Pyannote 2.1 (speaker-diarization)...", flush=True)
+
+    if not HF_TOKEN:
+        print("WARNING: HF_TOKEN non défini, l'accès au modèle Pyannote peut échouer.", flush=True)
+    else:
         os.environ["HUGGING_FACE_HUB_TOKEN"] = HF_TOKEN
         try:
             login(token=HF_TOKEN, add_to_git_credential=False)
-            print("Authentification Hugging Face configurée")
+            print("Authentification Hugging Face configurée", flush=True)
         except Exception as e:
-            print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}")
-    
+            print(f"Warning: Erreur lors de l'authentification Hugging Face: {e}", flush=True)
+
     try:
-        # Fix pour PyTorch 2.6+ : autoriser les classes Pyannote dans torch.load()
-        # (nécessaire car weights_only=True est maintenant le défaut)
-        import torch.torch_version
-        from pyannote.audio.core.task import Specifications, Problem, Resolution
-        torch.serialization.add_safe_globals([
-            torch.torch_version.TorchVersion,
-            Specifications,
-            Problem,
-            Resolution,
-        ])
-        
-        # Dans Pyannote 4.0, pipeline.to(device) est obligatoire pour GPU
-        print("Téléchargement du modèle depuis Hugging Face...", flush=True)
-        import sys
-        sys.stdout.flush()
-        
+        start_time = time.time()
+
         # #region agent log
-        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-        debug_msg = {"location":"handler.py:load_pipeline:before_from_pretrained","message":"Avant Pipeline.from_pretrained","data":{"model":DIARIZATION_MODEL},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}
-        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps(debug_msg) + '\n')
+                f.write(json.dumps({
+                    "location": "handler.py:load_pipeline:before_from_pretrained",
+                    "message": "Avant Pipeline.from_pretrained",
+                    "data": {"model": DIARIZATION_MODEL},
+                    "timestamp": time.time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H2"
+                }) + '\n')
         except Exception:
             pass
         # #endregion
-        
-        # Pipeline.from_pretrained peut prendre plusieurs minutes
-        # Si les modèles sont préchargés dans le Dockerfile, cela devrait être rapide (< 10s)
-        # Sinon, cela télécharge les modèles (peut bloquer)
-        print("DEBUG: Appel Pipeline.from_pretrained() - utilisation du cache Hugging Face si disponible...", flush=True)
-        pipeline_start_time = __import__('time').time()
-        
-        # Essayer d'abord avec local_files_only=True si les modèles sont en cache
-        # Sinon, télécharger normalement (mais avec timeout)
-        try:
-            # Vérifier si le cache existe - H2: Vérifier tous les chemins possibles
-            from huggingface_hub import snapshot_download
-            import pathlib
-            
-            # H2: Vérifier plusieurs chemins de cache possibles
-            cache_paths = [
-                os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface')),
-                os.path.expanduser('~/.cache/huggingface'),
-                '/root/.cache/huggingface',
-                os.getenv('TRANSFORMERS_CACHE'),
-                os.getenv('HF_HOME'),
-            ]
-            
-            # #region agent log
-            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps({"location":"handler.py:load_pipeline:cache_check","message":"Vérification des chemins de cache","data":{"cache_paths":cache_paths,"HF_HOME":os.getenv('HF_HOME'),"user_home":os.path.expanduser('~')},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            
-            model_cache_found = None
-            for cache_dir in cache_paths:
-                if cache_dir:
-                    model_cache = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
-                    if os.path.exists(model_cache):
-                        model_cache_found = model_cache
-                        # #region agent log
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps({"location":"handler.py:load_pipeline:cache_found","message":"Cache trouvé","data":{"cache_path":model_cache,"files":os.listdir(model_cache) if os.path.isdir(model_cache) else []},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
-                        except Exception:
-                            pass
-                        # #endregion
-                        break
-            
-            if model_cache_found:
-                print(f"DEBUG: Cache Hugging Face trouvé: {model_cache_found}", flush=True)
-                print("DEBUG: Chargement depuis le cache local (rapide)...", flush=True)
-                # Les modèles sont en cache, chargement rapide
-                pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL, local_files_only=False)
-            else:
-                # #region agent log
-                try:
-                    with open(log_path, 'a') as f:
-                        f.write(json.dumps({"location":"handler.py:load_pipeline:cache_not_found","message":"Cache non trouvé, liste des répertoires vérifiés","data":{"checked_paths":[os.path.join(cd, 'hub', 'models--pyannote--speaker-diarization-3.1') for cd in cache_paths if cd]},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H1"}) + '\n')
-                except Exception:
-                    pass
-                # #endregion
-                print("DEBUG: Cache non trouvé, téléchargement depuis Hugging Face...", flush=True)
-                # Ajouter un timeout pour éviter un blocage infini
-                import threading
-                import queue
-                result_queue = queue.Queue()
-                error_queue = queue.Queue()
-                
-                def load_pipeline_thread():
-                    # #region agent log
-                    log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-                    try:
-                        with open(log_path, 'a') as f:
-                            f.write(json.dumps({"location":"handler.py:load_pipeline_thread:start","message":"Thread de téléchargement démarré","data":{"model":DIARIZATION_MODEL},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
-                    except Exception:
-                        pass
-                    # #endregion
-                    try:
-                        # H4: Vérifier la progression du téléchargement
-                        import requests
-                        # Utiliser la méthode moderne pour obtenir le cache dir
-                        try:
-                            from huggingface_hub import hf_hub_cache_dir
-                            cache_dir = hf_hub_cache_dir()
-                        except ImportError:
-                            # Fallback pour versions plus anciennes
-                            cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
-                        # #region agent log
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:before_download","message":"Avant Pipeline.from_pretrained","data":{"cache_dir":cache_dir,"HF_HOME":os.getenv('HF_HOME')},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
-                        except Exception:
-                            pass
-                        # #endregion
-                        result = Pipeline.from_pretrained(DIARIZATION_MODEL)
-                        # #region agent log
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:after_download","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(result).__name__},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
-                        except Exception:
-                            pass
-                        # #endregion
-                        result_queue.put(result)
-                    except Exception as e:
-                        # #region agent log
-                        try:
-                            with open(log_path, 'a') as f:
-                                f.write(json.dumps({"location":"handler.py:load_pipeline_thread:error","message":"Erreur dans le thread","data":{"error":str(e),"error_type":type(e).__name__},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
-                        except Exception:
-                            pass
-                        # #endregion
-                        error_queue.put(e)
-                
-                load_thread = threading.Thread(target=load_pipeline_thread, daemon=True)
-                load_thread.start()
-                
-                # Attendre avec timeout (30 minutes max pour télécharger les modèles)
-                timeout_seconds = 1800
-                check_interval = 60  # Vérifier toutes les 60 secondes
-                elapsed = 0
-                
-                # H4: Vérifier la progression du téléchargement
-                while elapsed < timeout_seconds and load_thread.is_alive():
-                    load_thread.join(timeout=min(check_interval, timeout_seconds - elapsed))
-                    elapsed += check_interval
-                    if load_thread.is_alive():
-                        # #region agent log
-                        try:
-                            with open(log_path, 'a') as f:
-                                # Vérifier si des fichiers sont en cours de téléchargement
-                                try:
-                                    from huggingface_hub import hf_hub_cache_dir
-                                    cache_dir = hf_hub_cache_dir()
-                                except ImportError:
-                                    cache_dir = os.getenv('HF_HOME', os.path.expanduser('~/.cache/huggingface'))
-                                model_cache_path = os.path.join(cache_dir, 'hub', 'models--pyannote--speaker-diarization-3.1')
-                                cache_files = []
-                                if os.path.exists(model_cache_path):
-                                    try:
-                                        for root, dirs, files in os.walk(model_cache_path):
-                                            cache_files.extend([os.path.join(root, f) for f in files[:10]])  # Limiter à 10 fichiers
-                                    except Exception:
-                                        pass
-                                f.write(json.dumps({"location":"handler.py:load_pipeline:progress_check","message":"Vérification progression téléchargement","data":{"elapsed":elapsed,"timeout":timeout_seconds,"cache_dir":cache_dir,"cache_exists":os.path.exists(model_cache_path),"cache_files_count":len(cache_files),"sample_files":cache_files[:3]},"timestamp":time.time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H4"}) + '\n')
-                        except Exception:
-                            pass
-                        # #endregion
-                        print(f"DEBUG: Téléchargement en cours... ({elapsed}s/{timeout_seconds}s)", flush=True)
-                
-                if load_thread.is_alive():
-                    load_thread.join(timeout=0)  # Ne pas attendre plus
-                
-                if load_thread.is_alive():
-                    error_msg = f"Pipeline.from_pretrained() a dépassé le timeout de {timeout_seconds}s - probable blocage réseau ou mémoire. Les modèles devraient être préchargés dans le Dockerfile."
-                    print(f"ERROR: {error_msg}", flush=True)
-                    raise TimeoutError(error_msg)
-                
-                if not error_queue.empty():
-                    error = error_queue.get()
-                    print(f"ERROR: Erreur lors du chargement du pipeline: {error}", flush=True)
-                    raise error
-                
-                if result_queue.empty():
-                    error_msg = "Pipeline.from_pretrained() s'est terminé sans résultat ni erreur - état inattendu"
-                    print(f"ERROR: {error_msg}", flush=True)
-                    raise RuntimeError(error_msg)
-                
-                pipeline = result_queue.get()
-        except TimeoutError:
-            raise
-        except Exception as e:
-            # Si local_files_only échoue, essayer le téléchargement normal
-            print(f"DEBUG: Erreur avec cache local, tentative téléchargement normal: {e}", flush=True)
-        pipeline = Pipeline.from_pretrained(DIARIZATION_MODEL)
-        
-        pipeline_load_duration = __import__('time').time() - pipeline_start_time
-        print(f"DEBUG: Pipeline.from_pretrained() terminé en {pipeline_load_duration:.1f}s", flush=True)
-        
+
+        # Pour Pyannote 2.x, le paramètre standard est use_auth_token
+        pipeline_args = {}
+        if HF_TOKEN:
+            pipeline_args["use_auth_token"] = HF_TOKEN
+
+        pipeline_local = Pipeline.from_pretrained(DIARIZATION_MODEL, **pipeline_args)
+        duration = time.time() - start_time
+        print(f"Pipeline.from_pretrained() terminé en {duration:.1f}s", flush=True)
+
         # #region agent log
-        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-        debug_msg = {"location":"handler.py:load_pipeline:after_from_pretrained","message":"Pipeline.from_pretrained terminé","data":{"pipeline_type":type(pipeline).__name__,"duration":pipeline_load_duration},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}
-        print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
         try:
             with open(log_path, 'a') as f:
-                f.write(json.dumps(debug_msg) + '\n')
+                f.write(json.dumps({
+                    "location": "handler.py:load_pipeline:after_from_pretrained",
+                    "message": "Pipeline.from_pretrained terminé",
+                    "data": {"pipeline_type": type(pipeline_local).__name__, "duration": duration},
+                    "timestamp": time.time(),
+                    "sessionId": "debug-session",
+                    "runId": "run1",
+                    "hypothesisId": "H2"
+                }) + '\n')
         except Exception:
             pass
         # #endregion
-        
-        print("Modèle téléchargé, déplacement sur GPU...", flush=True)
-        sys.stdout.flush()
-        
-        if torch.cuda.is_available():
-            device = torch.device("cuda")
-            print(f"Déplacement du pipeline sur GPU: {device}...", flush=True)
-            sys.stdout.flush()
-            
-            # #region agent log
-            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-            vram_before = torch.cuda.memory_allocated(0) / 1024**3
-            debug_msg = {"location":"handler.py:load_pipeline:before_to_device","message":"Avant pipeline.to(device)","data":{"device":str(device),"vram_before":vram_before},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}
-            print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps(debug_msg) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            
-            print(f"DEBUG: Déplacement pipeline sur GPU - VRAM avant: {vram_before:.2f} GB", flush=True)
-            to_device_start = __import__('time').time()
-            pipeline.to(device)
-            to_device_duration = __import__('time').time() - to_device_start
-            vram_after = torch.cuda.memory_allocated(0) / 1024**3
-            print(f"DEBUG: pipeline.to(device) terminé en {to_device_duration:.1f}s - VRAM après: {vram_after:.2f} GB", flush=True)
-            
-            # #region agent log
-            log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-            debug_msg = {"location":"handler.py:load_pipeline:after_to_device","message":"pipeline.to(device) terminé","data":{"vram_after":vram_after,"duration":to_device_duration},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H3"}
-            print(f"DEBUG LOG: {json.dumps(debug_msg)}", flush=True)
-            try:
-                with open(log_path, 'a') as f:
-                    f.write(json.dumps(debug_msg) + '\n')
-            except Exception:
-                pass
-            # #endregion
-            
-            print(f"Pipeline déplacé sur GPU: {device}", flush=True)
-            print(f"VRAM après chargement: {torch.cuda.memory_allocated(0) / 1024**3:.2f} GB", flush=True)
-        else:
-            print("Attention: GPU non disponible, utilisation CPU (lent)", flush=True)
-        
-        sys.stdout.flush()
+
+        pipeline = pipeline_local
         print("Modèle Pyannote chargé avec succès!", flush=True)
-        sys.stdout.flush()
-        
-        # #region agent log
-        log_path = os.getenv('DEBUG_LOG_PATH', '/tmp/debug.log')
-        try:
-            with open(log_path, 'a') as f:
-                f.write(json.dumps({"location":"handler.py:load_pipeline:success","message":"load_pipeline terminé avec succès","data":{},"timestamp":__import__('time').time(),"sessionId":"debug-session","runId":"run1","hypothesisId":"H2"}) + '\n')
-        except Exception:
-            pass
-        # #endregion
-        
         return pipeline
     except Exception as e:
         error_msg = f"Erreur lors du chargement du pipeline Pyannote: {str(e)}"
-        print(f"ERROR: {error_msg}")
-        import traceback
+        print(f"ERROR: {error_msg}", flush=True)
         traceback.print_exc()
         raise Exception(error_msg)
 

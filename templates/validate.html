@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Validation des locuteurs - Aodio{% endblock %}
+
+{% block content %}
+<div class="px-4 py-6 sm:px-0">
+    <div class="text-center mb-6">
+        <h1 class="text-2xl font-bold text-gray-900 mb-2">Validation des locuteurs</h1>
+        <p class="text-sm text-gray-600">
+            Certains locuteurs n'ont pas pu être identifiés automatiquement. Vous pouvez ici leur attribuer un nom.
+        </p>
+    </div>
+
+    <div id="validationContainer" class="max-w-5xl mx-auto space-y-6"
+         data-session-id="{{ session_id }}">
+
+        <div id="validationAlert" class="bg-yellow-50 border border-yellow-200 rounded-md p-4">
+            <p class="text-sm text-yellow-800">
+                Pour chaque <span class="font-semibold">SPEAKER_XX</span>, choisissez le participant correspondant
+                ou laissez « Non identifié » si vous n'êtes pas sûr.
+            </p>
+        </div>
+
+        <div id="speakerList" class="space-y-4">
+            <!-- La liste sera remplie côté client via /validate/<session_id> (GET) -->
+        </div>
+
+        <div class="flex justify-end">
+            <button id="submitValidationBtn"
+                    class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary">
+                Valider et enregistrer
+            </button>
+        </div>
+    </div>
+</div>
+
+<script>
+document.addEventListener('DOMContentLoaded', async () => {
+    const container = document.getElementById('validationContainer');
+    const sessionId = container.getAttribute('data-session-id');
+    const speakerListEl = document.getElementById('speakerList');
+    const submitBtn = document.getElementById('submitValidationBtn');
+
+    async function loadValidationData() {
+        const resp = await fetch(`/validate/${sessionId}`);
+        if (!resp.ok) {
+            speakerListEl.innerHTML = '<p class="text-sm text-red-600">Erreur lors du chargement des données de validation.</p>';
+            return;
+        }
+        const data = await resp.json();
+        const participants = data.participants || [];
+        const unidentified = data.unidentified_speakers || [];
+        const lowConfidence = data.low_confidence_speakers || [];
+        const samples = data.speaker_samples || {};
+        const currentMapping = data.current_mapping || {};
+
+        const targets = Array.from(new Set([...(unidentified || []), ...(lowConfidence || [])]));
+
+        if (!targets.length) {
+            speakerListEl.innerHTML = '<p class="text-sm text-green-700">Aucun locuteur à valider.</p>';
+            submitBtn.disabled = true;
+            return;
+        }
+
+        speakerListEl.innerHTML = '';
+
+        targets.forEach((speaker) => {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'border border-gray-200 rounded-md p-4 bg-white';
+
+            const heading = document.createElement('div');
+            heading.className = 'flex items-center justify-between mb-2';
+            heading.innerHTML =
+                `<div>
+                    <p class="text-sm font-semibold text-gray-900">${speaker}</p>
+                    <p class="text-xs text-gray-500">Locuteur à identifier</p>
+                 </div>`;
+
+            const select = document.createElement('select');
+            select.className = 'mt-2 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary';
+            select.setAttribute('data-speaker', speaker);
+
+            const emptyOption = document.createElement('option');
+            emptyOption.value = '';
+            emptyOption.textContent = '— Non identifié / laisser tel quel —';
+            select.appendChild(emptyOption);
+
+            participants.forEach((p) => {
+                const opt = document.createElement('option');
+                opt.value = p;
+                opt.textContent = p;
+                if (currentMapping[speaker] === p) {
+                    opt.selected = true;
+                }
+                select.appendChild(opt);
+            });
+
+            const customInput = document.createElement('input');
+            customInput.type = 'text';
+            customInput.placeholder = 'Ou saisir un nom personnalisé';
+            customInput.className = 'mt-2 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary';
+            customInput.setAttribute('data-speaker-custom', speaker);
+
+            const sampleTexts = samples[speaker] || [];
+            const samplesEl = document.createElement('div');
+            samplesEl.className = 'mt-3 space-y-1';
+
+            sampleTexts.slice(0, 3).forEach((txt) => {
+                const p = document.createElement('p');
+                p.className = 'text-xs text-gray-700 italic truncate';
+                p.textContent = `"${txt}"`;
+                samplesEl.appendChild(p);
+            });
+
+            wrapper.appendChild(heading);
+            wrapper.appendChild(select);
+            wrapper.appendChild(customInput);
+            if (sampleTexts.length) {
+                const label = document.createElement('p');
+                label.className = 'mt-2 text-xs font-medium text-gray-500';
+                label.textContent = 'Extraits représentatifs :';
+                wrapper.appendChild(label);
+                wrapper.appendChild(samplesEl);
+            }
+
+            speakerListEl.appendChild(wrapper);
+        });
+    }
+
+    submitBtn.addEventListener('click', async () => {
+        const mapping = {};
+        document.querySelectorAll('select[data-speaker]').forEach((sel) => {
+            const speaker = sel.getAttribute('data-speaker');
+            const selected = sel.value;
+            const custom = document.querySelector(`input[data-speaker-custom="${speaker}"]`).value.trim();
+            if (custom) {
+                mapping[speaker] = custom;
+            } else if (selected) {
+                mapping[speaker] = selected;
+            }
+        });
+
+        submitBtn.disabled = true;
+
+        const resp = await fetch(`/validate/${sessionId}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mapping }),
+        });
+
+        if (!resp.ok) {
+            submitBtn.disabled = false;
+            alert("Erreur lors de l'enregistrement de la validation.");
+            return;
+        }
+
+        alert('Validation enregistrée. Les prochains documents générés utiliseront ces noms.');
+    });
+
+    loadValidationData().catch(() => {
+        speakerListEl.innerHTML = '<p class="text-sm text-red-600">Erreur lors du chargement des données de validation.</p>';
+    });
+});
+</script>
+
+{% endblock %}
+

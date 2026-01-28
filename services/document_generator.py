@@ -43,6 +43,13 @@ class DocumentGenerator:
         """
         try:
             logger.info(f"Génération des documents pour la session {session_id}")
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "document_generation",
+                "event": "start",
+                "message": "Génération de tous les documents",
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             output_path = Path(output_folder) / session_id
             output_path.mkdir(parents=True, exist_ok=True)
@@ -106,6 +113,14 @@ class DocumentGenerator:
             documents['decisions_pdf'] = str(decisions_pdf)
             
             logger.info(f"Tous les documents générés avec succès")
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "document_generation",
+                "event": "end",
+                "message": "Tous les documents générés avec succès",
+                "data": {"documents": list(documents.keys())},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             return documents
             
         except Exception as e:

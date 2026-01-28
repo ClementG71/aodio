@@ -281,8 +281,8 @@ class EnhancedSpeakerMapper:
             position_in_meeting = "début" if first_appearance < total_duration * 0.2 else \
                                   "fin" if first_appearance > total_duration * 0.8 else "milieu"
             
-            # Extraits représentatifs (premiers segments avec texte)
-            sample_texts = texts[:5]  # Premiers 5 segments
+            # Extraits représentatifs avec meilleur échantillonnage
+            sample_texts = self._get_representative_samples(texts)
             
             speaker_stats[speaker] = {
                 'total_duration': total_duration_speaker,
@@ -299,6 +299,44 @@ class EnhancedSpeakerMapper:
             }
         
         return speaker_stats
+
+    def _get_representative_samples(self, texts: List[str], count_per_position: int = 3) -> List[str]:
+        """
+        Extrait des échantillons représentatifs pour un speaker :
+        - segments du début, du milieu et de la fin
+        - segments où des personnes sont mentionnées (NER)
+
+        On déduplique et on limite à un nombre raisonnable d'extraits.
+        """
+        if not texts:
+            return []
+
+        samples: List[str] = []
+        n = len(texts)
+
+        # Début
+        samples.extend(texts[:count_per_position])
+
+        # Milieu
+        mid_start = max(0, n // 2 - count_per_position // 2)
+        samples.extend(texts[mid_start:mid_start + count_per_position])
+
+        # Fin
+        samples.extend(texts[-count_per_position:])
+
+        # Segments avec noms détectés (NER)
+        nlp = get_nlp()
+        if nlp:
+            for text in texts:
+                doc = nlp(text)
+                if any(ent.label_ == "PER" for ent in doc.ents):
+                    samples.append(text)
+                    if len(samples) >= 15:
+                        break
+
+        # Déduplication en conservant l'ordre, puis limitation
+        deduped = list(dict.fromkeys(samples))
+        return deduped[:15]
     
     def build_llm_context(self, 
                          speaker_stats: Dict[str, Dict[str, Any]], 

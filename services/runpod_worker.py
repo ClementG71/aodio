@@ -130,6 +130,14 @@ class RunPodWorker:
         """
         try:
             logger.info(f"Démarrage de la diarisation pour: {audio_path}")
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "diarization",
+                "event": "start_runpod",
+                "message": "Envoi du job de diarisation à RunPod",
+                "data": {"audio_path": audio_path, "endpoint_id": self.endpoint_id},
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
             
             # Upload du fichier (à adapter selon votre infrastructure)
             audio_url = self._upload_file(audio_path)
@@ -229,6 +237,14 @@ class RunPodWorker:
                 result = {"segments": cleaned_segments}
             
             logger.info(f"Diarisation terminée: {len(cleaned_segments)} segments (après nettoyage)")
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "diarization",
+                "event": "end_runpod",
+                "message": "Diarisation RunPod terminée",
+                "data": {"segments": len(cleaned_segments), "job_id": job_id},
+                "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            }))
             return result
             
         except Exception as e:

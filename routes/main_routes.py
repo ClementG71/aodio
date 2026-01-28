@@ -579,6 +579,19 @@ def create_app():
             metadata_path = session_folder / 'metadata.json'
             with open(metadata_path, 'w', encoding='utf-8') as f:
                 json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            # Log structuré de l'upload
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "upload",
+                "event": "success",
+                "message": "Fichiers uploadés et métadonnées initialisées",
+                "data": {
+                    "audio_file": str(audio_path),
+                    "context_files": list(context_files.keys()),
+                },
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
             
             # Démarrage du traitement audio asynchrone
             thread = Thread(target=process_audio_and_pipeline_wrapper, args=(session_id, metadata, str(audio_path)))
@@ -646,6 +659,164 @@ def create_app():
             return jsonify(status)
         except Exception as e:
             logger.error(f"Erreur lors de la récupération du statut: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/validate/<session_id>', methods=['GET'])
+    def get_validation_data(session_id):
+        """
+        Retourne les données nécessaires à la validation humaine des locuteurs :
+        - speakers non identifiés ou à faible confiance
+        - échantillons de texte représentatifs par speaker
+        - liste des participants connus
+
+        Les données sont récupérées à partir de metadata.json et/ou des logs.
+        """
+        try:
+            upload_folder_abs = Path(UPLOAD_FOLDER)
+            session_folder = upload_folder_abs / session_id
+            metadata_path = session_folder / 'metadata.json'
+
+            if not metadata_path.exists():
+                return jsonify({'error': 'Session introuvable'}), 404
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            transcription = metadata.get('transcription') or {}
+            segments = transcription.get('segments', [])
+            speaker_mapping = metadata.get('speaker_mapping', {})
+            confidence_scores = metadata.get('speaker_confidence', {})
+
+            # Participants (issus du fichier uploadé s'il existe)
+            participants: list[str] = []
+            context_files = metadata.get('context_files', {})
+            liste_participants_path = context_files.get('liste_participants')
+            if liste_participants_path and Path(liste_participants_path).exists():
+                try:
+                    with open(liste_participants_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    participants = [p.strip() for p in content.replace(',', '\n').split('\n') if p.strip()]
+                except Exception as e:
+                    logger.warning(f"Erreur lecture participants pour validation: {e}")
+
+            # Identifier les speakers présents dans les segments
+            all_speakers = sorted(
+                {s.get('speaker') for s in segments if s.get('speaker') and str(s.get('speaker')).startswith('SPEAKER_')}
+            )
+
+            unidentified = [s for s in all_speakers if s not in speaker_mapping]
+            low_confidence = [
+                s for s, c in confidence_scores.items()
+                if c < 0.7 and s in all_speakers and s not in unidentified
+            ]
+
+            # Construire des échantillons texte simples par speaker
+            speaker_samples: dict[str, list[str]] = {}
+            for seg in segments:
+                code = seg.get('speaker')
+                if code not in all_speakers:
+                    continue
+                if code not in speaker_samples:
+                    speaker_samples[code] = []
+                text = (seg.get('text') or '').strip()
+                if text and len(speaker_samples[code]) < 5:
+                    speaker_samples[code].append(text)
+
+            return jsonify({
+                'session_id': session_id,
+                'unidentified_speakers': unidentified,
+                'low_confidence_speakers': low_confidence,
+                'participants': participants,
+                'speaker_samples': speaker_samples,
+                'current_mapping': speaker_mapping,
+            })
+        except Exception as e:
+            logger.error(f"Erreur lors de la récupération des données de validation: {str(e)}", exc_info=True)
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/validate/<session_id>', methods=['POST'])
+    def submit_validation(session_id):
+        """
+        Reçoit les corrections humaines pour les locuteurs et met à jour
+        le mapping dans les métadonnées. La génération des documents
+        peut ensuite être relancée si besoin.
+        """
+        try:
+            data = request.get_json(silent=True) or {}
+            user_mapping: Dict[str, str] = data.get('mapping', {}) or {}
+
+            upload_folder_abs = Path(UPLOAD_FOLDER)
+            session_folder = upload_folder_abs / session_id
+            metadata_path = session_folder / 'metadata.json'
+
+            if not metadata_path.exists():
+                return jsonify({'error': 'Session introuvable'}), 404
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+
+            # Fusionner le mapping automatique et le mapping utilisateur
+            speaker_mapping = metadata.get('speaker_mapping', {})
+            speaker_mapping.update({k: v for k, v in user_mapping.items() if v})
+            metadata['speaker_mapping'] = speaker_mapping
+
+            # Génération des documents finaux après validation humaine
+            transcription = metadata.get('transcription') or {}
+            full_text = transcription.get('full_text', '')
+            date_seance = metadata.get('date_seance', datetime.now().strftime('%Y-%m-%d'))
+
+            if not transcription:
+                return jsonify({'error': 'Transcription manquante, impossible de générer les documents'}), 500
+
+            # Re-générer pré-compte rendu et décisions avec le mapping corrigé
+            pre_cr = mistral_processor.generate_pre_compte_rendu(
+                full_text,
+                speaker_mapping,
+            )
+            decisions = mistral_processor.extract_decisions(
+                full_text,
+                speaker_mapping,
+            )
+
+            documents = document_generator.generate_all_documents(
+                session_id=session_id,
+                transcription=transcription,
+                speaker_mapping=speaker_mapping,
+                pre_cr=pre_cr,
+                decisions=decisions,
+                date_seance=date_seance,
+                output_folder=os.getenv('PROCESSED_FOLDER', 'processed'),
+            )
+
+            metadata['speaker_mapping'] = speaker_mapping
+            metadata['status'] = 'completed'
+            metadata['documents'] = documents
+
+            with open(metadata_path, 'w', encoding='utf-8') as f:
+                json.dump(metadata, f, ensure_ascii=False, indent=2)
+
+            # Marquer dans les logs que la validation est terminée et que les documents ont été générés
+            log_manager.log_status(session_id, 'validation', 'Validation humaine des locuteurs effectuée')
+            log_manager.log_status(session_id, 'document_generation', 'Génération des documents après validation humaine', documents)
+            log_manager.log_status(session_id, 'completed', 'Traitement terminé après validation', documents)
+
+            logger.info(json.dumps({
+                "session_id": session_id,
+                "stage": "document_generation",
+                "event": "end_after_validation",
+                "message": "Documents générés après validation humaine",
+                "data": {"documents": list(documents.keys())},
+                "timestamp": datetime.utcnow().isoformat(),
+            }))
+
+            return jsonify({
+                'success': True,
+                'session_id': session_id,
+                'speaker_mapping': speaker_mapping,
+                'documents': documents,
+            })
+        except Exception as e:
+            logger.error(f"Erreur lors de la soumission de la validation: {str(e)}", exc_info=True)
             return jsonify({'error': str(e)}), 500
     
     @app.route('/cancel/<session_id>', methods=['POST'])
