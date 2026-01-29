@@ -20,6 +20,14 @@ try:
         print(f"DEBUG: CUDA version: {torch.version.cuda}")
         print(f"DEBUG: Device: {torch.cuda.get_device_name(0)}")
 
+    # PyTorch 2.6+ : weights_only=True par défaut dans torch.load. Les checkpoints pyannote
+    # (HF) contiennent TorchVersion ; l'autoriser pour permettre le chargement.
+    try:
+        from torch.torch_version import TorchVersion
+        torch.serialization.add_safe_globals([TorchVersion])
+    except Exception:
+        pass
+
     # Import Pyannote différé ou protégé pour diagnostiquer
     try:
         from pyannote.audio import Pipeline
