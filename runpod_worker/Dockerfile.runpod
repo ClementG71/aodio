@@ -25,10 +25,15 @@ WORKDIR /app
 # Copier requirements.txt
 COPY runpod_worker/requirements.txt ./requirements.txt
 
-# Installer les dépendances Python (pyannote 3.3.2 + torch 2.x)
+# 1) Pip + torch/torchaudio depuis l'index PyTorch CUDA 12.4 (évite conflits pip et wheels CPU)
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r requirements.txt && \
-    python -c "import torch; print(f'Torch: {torch.__version__}'); import pyannote.audio; print('Pyannote OK')"
+    pip install --no-cache-dir torch torchaudio --index-url https://download.pytorch.org/whl/cu124
+
+# 2) Reste des dépendances (pyannote voit torch/torchaudio déjà installés)
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 3) Vérification
+RUN python -c "import torch; print(f'Torch: {torch.__version__}'); import pyannote.audio; print('Pyannote OK')"
 
 # Copier le handler
 COPY runpod_worker/handler.py ./handler.py

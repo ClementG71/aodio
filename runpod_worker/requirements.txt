@@ -6,10 +6,9 @@ runpod>=1.0.0
 requests>=2.31.0
 
 # Pyannote 3.3.2 – pipeline speaker-diarization-3.1
+# torch/torchaudio sont installés dans le Dockerfile depuis l'index PyTorch (cu124)
 pyannote.audio>=3.3.2,<4.0.0
 
-# Dépendances explicites (compatibles pyannote 3.x, voir metadata PyPI 3.3.2)
-torch>=2.0.0
-torchaudio>=2.2.0
+# Dépendances complémentaires (pyannote 3.x)
 huggingface_hub>=0.23.0
 soundfile>=0.12.1
