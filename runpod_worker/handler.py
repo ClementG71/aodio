@@ -103,10 +103,10 @@ def load_pipeline():
             pass
         # #endregion
 
-        # Pour Pyannote 3.x, le paramètre standard est `token`
+        # Pyannote 3.3.x utilise use_auth_token (token introduit plus tard)
         pipeline_args = {}
         if HF_TOKEN:
-            pipeline_args["token"] = HF_TOKEN
+            pipeline_args["use_auth_token"] = HF_TOKEN
 
         pipeline_local = Pipeline.from_pretrained(DIARIZATION_MODEL, **pipeline_args)
         duration = time.time() - start_time
