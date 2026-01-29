@@ -230,7 +230,6 @@ class PipelineOrchestrator:
                         try:
                             from pathlib import Path
                             from config import UPLOAD_FOLDER
-                            import json
                             metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
                             if metadata_path.exists():
                                 with open(metadata_path, 'r', encoding='utf-8') as f:
