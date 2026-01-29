@@ -1,6 +1,6 @@
 """
-Worker RunPod pour la diarisation avec Pyannote 2.1.x
-Pyannote 2.x + PyTorch (version gérée par pyannote.audio)
+Worker RunPod pour la diarisation avec Pyannote 3.3.x
+Pyannote 3.x + PyTorch 2.x (géré par pyannote.audio)
 """
 import sys
 import traceback
@@ -35,7 +35,7 @@ except Exception as e:
     sys.exit(1)
 
 # Configuration
-DIARIZATION_MODEL = "pyannote/speaker-diarization"
+DIARIZATION_MODEL = "pyannote/speaker-diarization-3.1"
 HF_TOKEN = os.getenv("HF_TOKEN")
 
 # Initialisation du pipeline (chargé une seule fois au démarrage)
@@ -103,10 +103,10 @@ def load_pipeline():
             pass
         # #endregion
 
-        # Pour Pyannote 2.x, le paramètre standard est use_auth_token
+        # Pour Pyannote 3.x, le paramètre standard est `token`
         pipeline_args = {}
         if HF_TOKEN:
-            pipeline_args["use_auth_token"] = HF_TOKEN
+            pipeline_args["token"] = HF_TOKEN
 
         pipeline_local = Pipeline.from_pretrained(DIARIZATION_MODEL, **pipeline_args)
         duration = time.time() - start_time
@@ -239,7 +239,7 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
         pass
     # #endregion
     
-    # Pyannote 4.0 : appel standard avec gestion d'erreur améliorée
+    # Pyannote 3.x : appel standard avec gestion d'erreur améliorée
     try:
         pipeline_start = time.time()
         
@@ -304,7 +304,7 @@ def diarize_audio(audio_path: str, params: dict = None) -> dict:
         sys.stdout.flush()
     
     # Formatage des résultats
-    # Pyannote 4.0 peut renvoyer des labels différents, on standardise
+    # Pyannote 3.x peut renvoyer des labels différents, on standardise
     segments = []
     print("Formatage des segments...", flush=True)
     sys.stdout.flush()

@@ -1,13 +1,15 @@
-# Dépendances du worker RunPod pour la diarisation avec Pyannote 2.1.
-# Pyannote.audio 2.x gère ses propres dépendances torch/torchaudio/torchvision.
+# Dépendances du worker RunPod pour la diarisation avec Pyannote 3.3.2.
+# Pyannote.audio 3.x utilise des versions modernes de torch/torchaudio.
 
 # Utilitaires RunPod
 runpod>=1.0.0
 requests>=2.31.0
 
-# Pyannote 2.1.x – plus léger et plus simple à déployer que 4.x
-pyannote.audio>=2.1.1,<3.0.0
+# Pyannote 3.3.2 – pipeline speaker-diarization-3.1
+pyannote.audio>=3.3.2,<4.0.0
 
-# Dépendances complémentaires (compatibles pyannote 2.1.x : soundfile<0.11)
+# Dépendances explicites (compatibles pyannote 3.x, voir metadata PyPI 3.3.2)
+torch>=2.0.0
+torchaudio>=2.2.0
 huggingface_hub>=0.23.0
-soundfile>=0.10.2,<0.11
+soundfile>=0.12.1
