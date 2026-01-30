@@ -37,6 +37,13 @@ try:
         traceback.print_exc()
         raise
 
+    # PyTorch 2.6 weights_only : les checkpoints pyannote (segmentation) contiennent aussi Specifications
+    try:
+        from pyannote.audio.core.task import Specifications
+        torch.serialization.add_safe_globals([Specifications])
+    except Exception:
+        pass
+
 except Exception as e:
     print(f"CRITICAL: Erreur au démarrage du worker: {e}")
     traceback.print_exc()
