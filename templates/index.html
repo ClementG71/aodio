@@ -351,6 +351,19 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
                     submitBtn.disabled = false;
                     submitBtn.textContent = 'Démarrer le traitement';
                     currentSessionId = null;
+                } else if (statusData.status === 'validation_pending') {
+                    clearInterval(pollInterval);
+                    pollInterval = null;
+                    statusArea.classList.remove('hidden');
+                    statusArea.classList.remove('bg-blue-50', 'border-blue-200');
+                    statusArea.classList.add('bg-yellow-50', 'border-yellow-200');
+                    statusMessage.textContent = 'Validation humaine requise';
+                    statusDetails.textContent = 'Certains locuteurs n\'ont pas pu être identifiés avec certitude. Ouvrez la page de validation ci-dessous pour les corriger, puis terminez le traitement.';
+                    statusSpinner.classList.add('hidden');
+                    cancelBtn.classList.remove('hidden');
+                    validationArea.classList.remove('hidden');
+                    submitBtn.disabled = false;
+                    submitBtn.textContent = 'Démarrer le traitement';
                 } else {
                     // Mise à jour du statut
                     const lastStage = statusData.stages && statusData.stages.length > 0 
