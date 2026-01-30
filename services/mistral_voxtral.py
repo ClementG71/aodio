@@ -42,8 +42,9 @@ class MistralVoxtralClient:
             raise ValueError("MISTRAL_API_KEY doit être fourni")
         
         self.client = Mistral(api_key=self.api_key)
-        # Pour la transcription via audio/transcriptions, utiliser voxtral-mini-latest
-        self.model = "voxtral-mini-latest"
+        self.model = os.getenv("VOXTRAL_TRANSCRIPTION_MODEL", "voxtral-mini-latest")
+        self.fallback_model = "voxtral-mini-latest"
+        logger.info(f"Modèle de transcription configuré: {self.model}")
         # Limite de contexte: 16384 tokens
         self.max_segment_duration = 600  # 10 minutes en secondes
         self.max_audio_duration_before_split = 480  # 8 minutes
@@ -593,6 +594,13 @@ VALIDATION OBLIGATOIRE :
                             retry_delay *= 2
                             continue
                     elif e.http_res.status_code == 400:
+                        if self.model != self.fallback_model:
+                            logger.warning(
+                                f"FALLBACK: Modèle {self.model} non supporté pour transcription, "
+                                f"bascule vers {self.fallback_model}"
+                            )
+                            self.model = self.fallback_model
+                            continue
                         logger.error(f"Erreur 400 lors de la transcription du segment: {e}")
                         raise
                 
@@ -675,12 +683,20 @@ VALIDATION OBLIGATOIRE :
                 return result
                 
             except SDKError as e:
-                if (hasattr(e, 'http_res') and e.http_res and 
-                    e.http_res.status_code == 400 and 
-                    "too large" in str(e).lower()):
-                    logger.warning(f"Fichier trop grand (400), découpage automatique...")
-                    output_dir = Path(audio_path).parent
-                    return self._transcribe_long_audio(audio_path, diarization_segments, language, output_dir)
+                if hasattr(e, 'http_res') and e.http_res and e.http_res.status_code == 400:
+                    if self.model != self.fallback_model:
+                        logger.warning(
+                            f"FALLBACK: Modèle {self.model} non supporté pour transcription, "
+                            f"bascule vers {self.fallback_model}"
+                        )
+                        self.model = self.fallback_model
+                        continue
+                    if "too large" in str(e).lower():
+                        logger.warning(f"Fichier trop grand (400), découpage automatique...")
+                        output_dir = Path(audio_path).parent
+                        return self._transcribe_long_audio(audio_path, diarization_segments, language, output_dir)
+                    logger.error(f"Erreur 400 lors de la transcription: {e}")
+                    raise
                 
                 if hasattr(e, 'http_res') and e.http_res and e.http_res.status_code == 503:
                     if attempt < max_retries - 1:

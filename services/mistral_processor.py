@@ -106,49 +106,68 @@ def _extract_text_from_file(file_path: Optional[Path]) -> str:
     return ""
 
 
-def _parse_ordre_du_jour_points(text: str) -> List[Dict[str, Any]]:
-    """Parse le texte de l'ordre du jour pour extraire les points numérotés. Retourne [{numero, titre}, ...]."""
-    import re
-    points = []
-    # Numérotation : 1. Titre, 1) Titre, 1 - Titre
-    pattern = re.compile(r"^\s*(\d+)\s*[\.\)\-]\s*(.+)$", re.MULTILINE)
-    for m in pattern.finditer(text):
-        num = int(m.group(1))
-        titre = m.group(2).strip()
-        if titre:
-            points.append({"numero": num, "titre": titre})
-    if not points:
-        # Fallback : lignes non vides comme points 1, 2, 3...
-        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
-        for i, ln in enumerate(lines, 1):
-            points.append({"numero": i, "titre": ln})
-    return sorted(points, key=lambda x: x["numero"])
+# Libellés de vote à exclure (ne sont pas des points)
+VOTE_LABELS = {"pour", "contre", "abstention", "ne prend pas part au vote", "ne prend pas part"}
 
 
-def _parse_releves_votes(text: str) -> Dict[int, str]:
-    """Parse le texte des relevés de votes. Retourne {numero_point: description_vote}."""
+def _parse_cfve_document(text: str) -> List[Dict[str, Any]]:
+    """
+    Parse un document CFVE (ordre du jour ou relevé de votes).
+    Reconnaît les points numérotés N) et extrait :
+    - numero, titre (possiblement multi-lignes)
+    - recus (nombre de bulletins reçus)
+    - vote (lignes type "X voix pour", résultats partiels)
+    """
     import re
-    result = {}
-    # Chercher des blocs "Point N" ou "N." suivis du détail du vote
+
     lines = text.splitlines()
-    current_num = None
-    current_lines = []
+    points = []
+    current_point = None
+
+    point_pattern = re.compile(r"^\s*(\d+)\)\s*(.*)$")
+    recus_pattern = re.compile(r"Reçus\s*:\s*(\d+)", re.IGNORECASE)
+    vote_result_pattern = re.compile(r"(\d+)\s*(?:voix\s+)?(pour|contre|abstention)", re.IGNORECASE)
+
     for line in lines:
-        m = re.match(r"^\s*(?:Point\s*)?(\d+)\s*[\.\)\-:\s]\s*(.*)$", line, re.IGNORECASE)
-        if m:
-            if current_num is not None and current_lines:
-                result[current_num] = " ".join(current_lines).strip()
-            current_num = int(m.group(1))
-            current_lines = [m.group(2).strip()] if m.group(2).strip() else []
-        else:
-            if current_num is not None and line.strip():
-                current_lines.append(line.strip())
-    if current_num is not None and current_lines:
-        result[current_num] = " ".join(current_lines).strip()
-    # Fallback : tout le texte comme vote du point 1
-    if not result and text.strip():
-        result[1] = text.strip()
-    return result
+        stripped = line.strip()
+        if not stripped:
+            continue
+
+        label_match = re.match(r"^\d+\.\s*(.+)$", stripped)
+        if label_match and label_match.group(1).strip().lower() in VOTE_LABELS:
+            continue
+
+        point_match = point_pattern.match(stripped)
+        if point_match:
+            if current_point:
+                points.append(current_point)
+
+            num = int(point_match.group(1))
+            titre = point_match.group(2).strip()
+            current_point = {"numero": num, "titre": titre, "recus": None, "vote": ""}
+            continue
+
+        if current_point:
+            recus_match = recus_pattern.search(stripped)
+            if recus_match:
+                current_point["recus"] = int(recus_match.group(1))
+                continue
+
+            vote_match = vote_result_pattern.search(stripped)
+            if vote_match:
+                vote_str = f"{vote_match.group(1)} {vote_match.group(2)}"
+                if current_point["vote"]:
+                    current_point["vote"] += ", " + vote_str
+                else:
+                    current_point["vote"] = vote_str
+                continue
+
+            current_point["titre"] += " " + stripped
+
+    if current_point:
+        points.append(current_point)
+
+    return sorted(points, key=lambda x: x["numero"])
 
 
 def build_decisions_from_files(
@@ -156,27 +175,32 @@ def build_decisions_from_files(
     releves_votes_path: Optional[Path],
 ) -> List[Dict[str, Any]]:
     """
-    Construit le relevé des décisions à partir des fichiers ordre du jour et relevés de votes.
+    Construit le relevé des décisions à partir du PDF CFVE (ordre du jour et/ou relevé de votes).
     Retourne une liste de dicts [{numero, titre, vote}, ...] compatible avec le document generator.
     """
     odj_text = _extract_text_from_file(ordre_du_jour_path)
     votes_text = _extract_text_from_file(releves_votes_path) if releves_votes_path else ""
-    points = _parse_ordre_du_jour_points(odj_text)
-    votes_by_num = _parse_releves_votes(votes_text) if votes_text else {}
+    combined_text = (odj_text or "") + "\n" + (votes_text or "")
+    points = _parse_cfve_document(combined_text) if combined_text.strip() else []
+
     decisions = []
     for p in points:
-        num = p["numero"]
-        titre = p["titre"]
-        vote = votes_by_num.get(num, "")
+        vote_desc = p.get("vote", "")
+        if p.get("recus") is not None:
+            vote_desc = f"Reçus : {p['recus']}" + (f" - {vote_desc}" if vote_desc else "")
+        if not vote_desc:
+            vote_desc = "Non renseigné"
+
         decisions.append({
-            "numero": num,
-            "titre": titre,
-            "vote": vote or "Non soumis au vote ou non renseigné",
+            "numero": p["numero"],
+            "titre": p["titre"],
+            "vote": vote_desc,
         })
+
     if not decisions and (odj_text or votes_text):
-        # Au moins un fichier fourni mais parsing vide : retourner une entrée générique
-        decisions = [{"numero": 1, "titre": "Points à l'ordre du jour", "vote": votes_text.strip() or "Non renseigné"}]
-    logger.info(f"build_decisions_from_files: {len(decisions)} décisions à partir des fichiers")
+        decisions = [{"numero": 1, "titre": "Points à l'ordre du jour", "vote": (votes_text or odj_text or "").strip() or "Non renseigné"}]
+
+    logger.info(f"build_decisions_from_files: {len(decisions)} décisions extraites")
     return decisions
 
 
@@ -588,37 +612,20 @@ ORDRE DU JOUR (à respecter pour la structure du pré-compte rendu) :
 ---
 """
 
-        format_example = """
-FORMAT ATTENDU (exemple) :
----
-PRÉ-COMPTE RENDU – Réunion du [date]
+        prompt = f"""Tu es un secrétaire de séance expert.
 
-1. [Intitulé du point 1]
-   Synthèse des échanges : [qui a dit quoi, positions]. Décision ou suite donnée.
-
-2. [Intitulé du point 2]
-   Idem.
-
-Votes et décisions sont à mentionner clairement pour chaque point soumis au vote.
----
-"""
-
-        prompt = f"""Tu es un secrétaire de séance expert pour une université.
-        
 TÂCHE :
-Rédige un pré-compte rendu formel, structuré et synthétique de cette réunion (CFVE ou instance équivalente).
-Le document doit ressembler à un vrai pré-compte rendu administratif : titres de points, synthèse des débats par point, attribution des propos aux bonnes personnes, votes et décisions mis en évidence.
+Reformate la transcription ci-dessous en un **compte-rendu des débats** : texte neutre et lisible qui rend compte de ce qui a été dit, en conservant l'esprit des échanges sans inventer d'éléments.
 {odj_block}
 CONSIGNES :
-1. Ton neutre et administratif.
-2. Structure obligatoirement par points, en suivant l'ordre du jour si fourni ci-dessus.
-3. Pour chaque point : synthétiser les débats en attribuant les idées aux bons intervenants.
-4. Indiquer clairement les votes et décisions pour les points soumis au vote.
-{format_example}
+1. Pour chaque intervention ou groupe d'interventions : retranscrire le contenu de façon **neutre**, en prose fluide.
+2. Supprimer les répétitions, hésitations et tics de parole, tout en conservant les positions et arguments exprimés.
+3. Attribuer les propos aux bons intervenants (utilise les noms présents dans la transcription).
+4. Ne pas résumer de façon libre ni ajouter de commentaires ; rester au plus près de ce qui a été dit, en l'allégeant pour la lecture.
+5. Si un ordre du jour est fourni ci-dessus, structurer le document par points.
 
-TRANSCRIPTION DE LA RÉUNION :
+TRANSCRIPTION :
 {processed_text[:100000]}
-(Texte tronqué si trop long ; privilégie le début et les points clés.)
 """
 
         try:
