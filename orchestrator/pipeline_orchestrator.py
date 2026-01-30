@@ -228,7 +228,6 @@ class PipelineOrchestrator:
                     # Stocker le job_id dans les métadonnées pour permettre l'annulation
                     if 'job_id' in diarization_result:
                         try:
-                            from pathlib import Path
                             from config import UPLOAD_FOLDER
                             metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
                             if metadata_path.exists():
