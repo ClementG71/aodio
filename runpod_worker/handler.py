@@ -146,20 +146,75 @@ def load_pipeline():
         raise Exception(error_msg)
 
 
+# Timeouts et retries pour le téléchargement audio
+DOWNLOAD_CONNECT_TIMEOUT = 15   # secondes pour établir la connexion
+DOWNLOAD_READ_TIMEOUT = 60      # secondes max sans recevoir de données (par chunk)
+DOWNLOAD_MAX_RETRIES = 2        # nombre de tentatives en cas d'échec
+DOWNLOAD_RETRY_BACKOFF = (2, 4) # secondes d'attente entre les tentatives
+DOWNLOAD_PROGRESS_LOG_MB = 2    # log de progression tous les N MB
+
+
 def download_audio(audio_url: str) -> str:
-    """Télécharge un fichier audio depuis une URL"""
+    """
+    Télécharge un fichier audio depuis une URL avec timeouts, retries et logs de progression.
+    """
+    import time
+
     temp_file = tempfile.NamedTemporaryFile(delete=False, suffix='.wav')
     temp_path = temp_file.name
     temp_file.close()
-    
-    response = requests.get(audio_url, stream=True)
-    response.raise_for_status()
-    
-    with open(temp_path, 'wb') as f:
-        for chunk in response.iter_content(chunk_size=8192):
-            f.write(chunk)
-    
-    return temp_path
+
+    last_error = None
+    for attempt in range(DOWNLOAD_MAX_RETRIES + 1):
+        try:
+            if attempt > 0:
+                wait = DOWNLOAD_RETRY_BACKOFF[min(attempt - 1, len(DOWNLOAD_RETRY_BACKOFF) - 1)]
+                print(f"Téléchargement: nouvelle tentative {attempt + 1}/{DOWNLOAD_MAX_RETRIES + 1} dans {wait}s...", flush=True)
+                time.sleep(wait)
+
+            print(f"Téléchargement: connexion à l'URL (timeout connexion={DOWNLOAD_CONNECT_TIMEOUT}s, lecture={DOWNLOAD_READ_TIMEOUT}s)...", flush=True)
+            start = time.time()
+            response = requests.get(
+                audio_url,
+                stream=True,
+                timeout=(DOWNLOAD_CONNECT_TIMEOUT, DOWNLOAD_READ_TIMEOUT),
+                headers={"User-Agent": "AodioRunPodWorker/1.0"},
+            )
+            response.raise_for_status()
+
+            total_size = response.headers.get("Content-Length")
+            total_size = int(total_size) if total_size else None
+            if total_size is not None:
+                print(f"Téléchargement: taille annoncée {total_size / (1024*1024):.2f} MB", flush=True)
+
+            downloaded = 0
+            next_log_mb = DOWNLOAD_PROGRESS_LOG_MB * (1024 * 1024)
+            chunk_size = 8192
+
+            with open(temp_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=chunk_size):
+                    if chunk:
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        if downloaded >= next_log_mb or (total_size and downloaded == total_size):
+                            if total_size:
+                                pct = 100.0 * downloaded / total_size
+                                print(f"Téléchargement: {downloaded / (1024*1024):.2f} / {total_size / (1024*1024):.2f} MB ({pct:.1f}%)", flush=True)
+                            else:
+                                print(f"Téléchargement: {downloaded / (1024*1024):.2f} MB reçus", flush=True)
+                            next_log_mb = (downloaded // (1024 * 1024) + DOWNLOAD_PROGRESS_LOG_MB) * (1024 * 1024)
+
+            elapsed = time.time() - start
+            print(f"Téléchargement terminé: {downloaded / (1024*1024):.2f} MB en {elapsed:.1f}s", flush=True)
+            return temp_path
+
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError, requests.exceptions.RequestException) as e:
+            last_error = e
+            print(f"Téléchargement: échec (tentative {attempt + 1}/{DOWNLOAD_MAX_RETRIES + 1}): {e}", flush=True)
+            if attempt == DOWNLOAD_MAX_RETRIES:
+                raise RuntimeError(f"Impossible de télécharger l'audio après {DOWNLOAD_MAX_RETRIES + 1} tentatives: {last_error}") from last_error
+
+    raise RuntimeError(f"Impossible de télécharger l'audio: {last_error}") from last_error
 
 
 def diarize_audio(audio_path: str, params: dict = None) -> dict:
