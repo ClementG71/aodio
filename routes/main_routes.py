@@ -5,6 +5,8 @@ import os
 import json
 import sys
 import uuid
+import subprocess
+from io import BytesIO
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, Any
@@ -659,6 +661,82 @@ def create_app():
             return jsonify(status)
         except Exception as e:
             logger.error(f"Erreur lors de la récupération du statut: {str(e)}")
+            return jsonify({'error': str(e)}), 500
+
+    @app.route('/validation/<session_id>')
+    def validation_page(session_id):
+        """Page de validation humaine des locuteurs"""
+        return render_template('validate.html', session_id=session_id)
+
+    @app.route('/validate/<session_id>/audio/<speaker>', methods=['GET'])
+    def get_validation_audio(session_id, speaker):
+        """
+        Extrait et renvoie ~10 s d'audio pour un locuteur (premier segment où il parle).
+        Cache optionnel dans le dossier session.
+        """
+        try:
+            safe_session_id = secure_filename(session_id)
+            safe_speaker = secure_filename(speaker)
+            if safe_session_id != session_id or safe_speaker != speaker:
+                return jsonify({'error': 'Paramètres invalides'}), 400
+
+            upload_folder_abs = Path(UPLOAD_FOLDER)
+            session_folder = upload_folder_abs / safe_session_id
+            audio_path = session_folder / 'audio_processed.wav'
+            metadata_path = session_folder / 'metadata.json'
+
+            if not audio_path.exists():
+                return jsonify({'error': 'Fichier audio introuvable'}), 404
+            if not metadata_path.exists():
+                return jsonify({'error': 'Session introuvable'}), 404
+
+            with open(metadata_path, 'r', encoding='utf-8') as f:
+                metadata = json.load(f)
+            segments = (metadata.get('transcription') or {}).get('segments', [])
+            speaker_segments = [s for s in segments if s.get('speaker') == speaker]
+            if not speaker_segments:
+                return jsonify({'error': 'Aucun segment pour ce locuteur'}), 404
+
+            # Premier segment (ou plus long) pour position de départ
+            first_seg = max(speaker_segments, key=lambda s: (s.get('end', 0) - s.get('start', 0)))
+            start = float(first_seg.get('start', 0))
+            duration = 10.0
+
+            cache_path = session_folder / f"clip_{safe_speaker}.wav"
+            if cache_path.exists():
+                return send_file(cache_path, mimetype='audio/wav', as_attachment=False)
+
+            result = subprocess.run(
+                [
+                    'ffmpeg', '-y',
+                    '-i', str(audio_path),
+                    '-ss', str(start),
+                    '-t', str(duration),
+                    '-f', 'wav',
+                    '-'
+                ],
+                capture_output=True,
+                timeout=30,
+            )
+            if result.returncode != 0:
+                logger.warning(f"ffmpeg extrait audio: {result.stderr.decode(errors='ignore')}")
+                return jsonify({'error': 'Extraction audio impossible'}), 500
+
+            try:
+                with open(cache_path, 'wb') as f:
+                    f.write(result.stdout)
+            except Exception:
+                pass
+
+            return send_file(
+                BytesIO(result.stdout),
+                mimetype='audio/wav',
+                as_attachment=False,
+            )
+        except subprocess.TimeoutExpired:
+            return jsonify({'error': 'Extraction audio en timeout'}), 504
+        except Exception as e:
+            logger.error(f"Erreur extrait audio validation: {str(e)}", exc_info=True)
             return jsonify({'error': str(e)}), 500
 
     @app.route('/validate/<session_id>', methods=['GET'])

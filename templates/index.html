@@ -224,13 +224,13 @@ document.getElementById('cancelBtn').addEventListener('click', cancelProcessing)
 // Bouton pour ouvrir la page de validation des locuteurs (si affichée)
 document.getElementById('openValidationBtn').addEventListener('click', () => {
     if (currentSessionId) {
-        window.location.href = `/validate/${currentSessionId}`;
+        window.location.href = `/validation/${currentSessionId}`;
     } else {
         // Si la session n'est plus en mémoire, on propose à l'utilisateur
         // de saisir l'identifiant manuellement (cas rare)
         const sessionId = prompt("Identifiant de session à valider :");
         if (sessionId) {
-            window.location.href = `/validate/${sessionId}`;
+            window.location.href = `/validation/${sessionId}`;
         }
     }
 });

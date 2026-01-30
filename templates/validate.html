@@ -76,6 +76,19 @@ document.addEventListener('DOMContentLoaded', async () => {
                     <p class="text-xs text-gray-500">Locuteur à identifier</p>
                  </div>`;
 
+            const audioLabel = document.createElement('p');
+            audioLabel.className = 'mt-2 text-xs font-medium text-gray-500';
+            audioLabel.textContent = 'Écouter un extrait (10 s) :';
+
+            const audioEl = document.createElement('audio');
+            audioEl.controls = true;
+            audioEl.className = 'w-full mt-1';
+            audioEl.preload = 'metadata';
+            const source = document.createElement('source');
+            source.src = `/validate/${sessionId}/audio/${encodeURIComponent(speaker)}`;
+            source.type = 'audio/wav';
+            audioEl.appendChild(source);
+
             const select = document.createElement('select');
             select.className = 'mt-2 block w-full rounded-md border-gray-300 text-sm shadow-sm focus:border-primary focus:ring-primary';
             select.setAttribute('data-speaker', speaker);
@@ -113,6 +126,8 @@ document.addEventListener('DOMContentLoaded', async () => {
             });
 
             wrapper.appendChild(heading);
+            wrapper.appendChild(audioLabel);
+            wrapper.appendChild(audioEl);
             wrapper.appendChild(select);
             wrapper.appendChild(customInput);
             if (sampleTexts.length) {
