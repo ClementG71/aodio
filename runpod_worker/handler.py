@@ -37,10 +37,10 @@ try:
         traceback.print_exc()
         raise
 
-    # PyTorch 2.6 weights_only : les checkpoints pyannote (segmentation) contiennent Specifications et Problem
+    # PyTorch 2.6 weights_only : les checkpoints pyannote (segmentation) contiennent Specifications, Problem, Resolution
     try:
-        from pyannote.audio.core.task import Specifications, Problem
-        torch.serialization.add_safe_globals([Specifications, Problem])
+        from pyannote.audio.core.task import Specifications, Problem, Resolution
+        torch.serialization.add_safe_globals([Specifications, Problem, Resolution])
     except Exception:
         pass
 
