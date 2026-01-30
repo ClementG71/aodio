@@ -52,14 +52,18 @@ class PipelineOrchestrator:
         self.log_manager = log_manager
         self.app_base_url = app_base_url
         
-    def _run_diarization_with_timeout(self, session_id: str, audio_path: str, timeout: int = 1800) -> Dict[str, Any]:
+    # Timeout diarisation : Pyannote ~0,4× temps réel (21 min audio ≈ 9 min). Pour production (audio 4h), prévoir ~2h.
+    # Pour réduire le temps wall-clock sur très longs enregistrements : découpage en chunks + jobs RunPod parallèles.
+    DIARIZATION_TIMEOUT_SECONDS = 7200  # 2 h
+
+    def _run_diarization_with_timeout(self, session_id: str, audio_path: str, timeout: int = None) -> Dict[str, Any]:
         """
         Exécute la diarisation avec gestion de timeout et fallback
         
         Args:
             session_id: ID de la session
             audio_path: Chemin du fichier audio
-            timeout: Timeout en secondes (30 minutes par défaut)
+            timeout: Timeout en secondes (défaut 2h pour supporter audio jusqu'à ~4h)
             
         Returns:
             dict: Résultat de la diarisation
@@ -69,6 +73,9 @@ class PipelineOrchestrator:
             Exception: En cas d'erreur critique ou d'annulation
         """
         import concurrent.futures
+        
+        if timeout is None:
+            timeout = self.DIARIZATION_TIMEOUT_SECONDS
         
         # Vérifier si la session est déjà annulée
         if self.log_manager.is_cancelled(session_id):
@@ -347,7 +354,7 @@ class PipelineOrchestrator:
 
             if unidentified or low_confidence:
                 # Mettre à jour le statut et arrêter le pipeline ici
-                self.log_manager.update_status(session_id, 'validation_pending', {
+                self.log_manager.log_status(session_id, 'validation_pending', 'Validation humaine requise', {
                     'unidentified_speakers': unidentified,
                     'low_confidence_speakers': low_confidence,
                     'speaker_mapping': speaker_mapping,

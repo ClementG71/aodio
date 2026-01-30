@@ -169,7 +169,7 @@ class RunPodWorker:
                     api_url,
                     headers=self.headers,
                     json=payload,
-                    timeout=1200  # Timeout à 20 minutes pour les fichiers longs (21 min audio = ~5-10 min traitement)
+                    timeout=120  # POST synchrone : on attend seulement l'acceptation du job (réponse rapide)
                 )
             
             # Log de la réponse pour debug
