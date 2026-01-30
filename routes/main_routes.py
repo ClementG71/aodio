@@ -19,7 +19,7 @@ from threading import Thread
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
 from services.mistral_voxtral import MistralVoxtralClient
-from services.mistral_processor import MistralProcessor
+from services.mistral_processor import MistralProcessor, extract_participants_from_pdf
 from services.document_generator import DocumentGenerator
 from services.log_manager import LogManager
 from orchestrator.pipeline_orchestrator import PipelineOrchestrator, AudioPipelineOrchestrator
@@ -765,17 +765,33 @@ def create_app():
             speaker_mapping = metadata.get('speaker_mapping', {})
             confidence_scores = metadata.get('speaker_confidence', {})
 
-            # Participants (issus du fichier uploadé s'il existe)
+            # Participants (issus du fichier uploadé s'il existe, texte ou PDF)
             participants: list[str] = []
             context_files = metadata.get('context_files', {})
             liste_participants_path = context_files.get('liste_participants')
             if liste_participants_path and Path(liste_participants_path).exists():
-                try:
-                    with open(liste_participants_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                    participants = [p.strip() for p in content.replace(',', '\n').split('\n') if p.strip()]
-                except Exception as e:
-                    logger.warning(f"Erreur lecture participants pour validation: {e}")
+                path = Path(liste_participants_path)
+                if path.suffix.lower() == '.pdf':
+                    try:
+                        participants = extract_participants_from_pdf(path)
+                        if participants:
+                            logger.info(f"Validation: liste des participants extraite du PDF ({len(participants)} noms)")
+                    except Exception as e:
+                        logger.warning(f"Erreur extraction participants depuis PDF pour validation: {e}")
+                else:
+                    try:
+                        content = None
+                        for encoding in ('utf-8', 'cp1252', 'latin-1'):
+                            try:
+                                with open(liste_participants_path, 'r', encoding=encoding) as f:
+                                    content = f.read()
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                        if content is not None:
+                            participants = [p.strip() for p in content.replace(',', '\n').split('\n') if p.strip()]
+                    except Exception as e:
+                        logger.warning(f"Erreur lecture participants pour validation: {e}")
 
             # Identifier les speakers présents dans les segments
             all_speakers = sorted(
@@ -822,6 +838,7 @@ def create_app():
         try:
             data = request.get_json(silent=True) or {}
             user_mapping: Dict[str, str] = data.get('mapping', {}) or {}
+            logger.info(f"Validation reçue pour {session_id}: mapping={user_mapping}")
 
             upload_folder_abs = Path(UPLOAD_FOLDER)
             session_folder = upload_folder_abs / session_id
@@ -837,6 +854,7 @@ def create_app():
             speaker_mapping = metadata.get('speaker_mapping', {})
             speaker_mapping.update({k: v for k, v in user_mapping.items() if v})
             metadata['speaker_mapping'] = speaker_mapping
+            logger.info(f"Validation appliquée pour {session_id}: mapping_final={speaker_mapping}")
 
             # Génération des documents finaux après validation humaine
             transcription = metadata.get('transcription') or {}

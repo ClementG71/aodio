@@ -32,6 +32,19 @@
             </button>
         </div>
     </div>
+
+    <div id="successArea" class="max-w-5xl mx-auto hidden mt-6">
+        <div class="bg-green-50 border border-green-200 rounded-md p-6">
+            <h3 class="text-lg font-medium text-green-800">Validation enregistrée avec succès</h3>
+            <p class="text-sm text-green-700 mt-2">Les documents ont été régénérés avec les noms validés.</p>
+            <div id="successDownloadLinks" class="mt-4 space-y-2"></div>
+            <div class="mt-4 flex flex-wrap gap-3">
+                <a href="/" class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-primary hover:bg-primary/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary">
+                    Retour à l'accueil
+                </a>
+            </div>
+        </div>
+    </div>
 </div>
 
 <script>
@@ -169,7 +182,21 @@ document.addEventListener('DOMContentLoaded', async () => {
             return;
         }
 
-        alert('Validation enregistrée. Les prochains documents générés utiliseront ces noms.');
+        const data = await resp.json();
+        document.getElementById('validationContainer').classList.add('hidden');
+        const successArea = document.getElementById('successArea');
+        successArea.classList.remove('hidden');
+        const linksEl = document.getElementById('successDownloadLinks');
+        if (data.documents && typeof data.documents === 'object') {
+            const labels = { minutes_txt: 'Minutes (TXT)', minutes_docx: 'Minutes (DOCX)', minutes_pdf: 'Minutes (PDF)', pre_cr_txt: 'Pré-CR (TXT)', pre_cr_docx: 'Pré-CR (DOCX)', pre_cr_pdf: 'Pré-CR (PDF)', decisions_txt: 'Relevé des décisions (TXT)', decisions_docx: 'Relevé des décisions (DOCX)', decisions_pdf: 'Relevé des décisions (PDF)' };
+            Object.keys(data.documents).forEach((key) => {
+                const a = document.createElement('a');
+                a.href = `/download/${sessionId}/${key}`;
+                a.className = 'block text-sm text-green-800 hover:text-green-900 underline';
+                a.textContent = labels[key] || key;
+                linksEl.appendChild(a);
+            });
+        }
     });
 
     loadValidationData().catch(() => {

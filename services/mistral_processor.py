@@ -5,6 +5,7 @@ Mapping des locuteurs (Hybride Spacy + Mistral Small), génération pré-CR (Mis
 import json
 import logging
 import os
+from pathlib import Path
 from typing import Dict, List, Any, Optional
 from mistralai import Mistral
 from tenacity import retry, stop_after_attempt, wait_exponential
@@ -15,6 +16,15 @@ from services.temporal_speaker_mapper import TemporalSpeakerMapper
 from services.transition_analyzer import TransitionAnalyzer
 
 logger = logging.getLogger(__name__)
+
+
+def extract_participants_from_pdf(pdf_path: Path) -> List[str]:
+    """Extrait les noms de participants depuis un PDF (un nom par ligne ou séparés par virgule)."""
+    from pypdf import PdfReader
+    reader = PdfReader(pdf_path)
+    text = "\n".join(page.extract_text() or "" for page in reader.pages)
+    return [p.strip() for p in text.replace(",", "\n").split("\n") if p.strip()]
+
 
 class MistralProcessor:
     """Gère les traitements LLM avec Mistral AI"""
@@ -61,16 +71,31 @@ class MistralProcessor:
                 logger.warning("Aucun segment à mapper.")
                 return {}
             
-            # 1. Charger la liste des participants
+            # 1. Charger la liste des participants (texte ou PDF)
             participants = []
             if liste_participants_path:
-                try:
-                    with open(liste_participants_path, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        # Supposons un nom par ligne ou séparé par virgule
-                        participants = [p.strip() for p in content.replace(',', '\n').split('\n') if p.strip()]
-                except Exception as e:
-                    logger.warning(f"Erreur lecture participants: {e}")
+                path = Path(liste_participants_path) if isinstance(liste_participants_path, str) else liste_participants_path
+                if path.suffix.lower() == '.pdf':
+                    try:
+                        participants = extract_participants_from_pdf(path)
+                        if participants:
+                            logger.info(f"Liste des participants extraite du PDF: {len(participants)} noms")
+                    except Exception as e:
+                        logger.warning(f"Erreur extraction participants depuis PDF: {e}")
+                else:
+                    try:
+                        content = None
+                        for encoding in ('utf-8', 'cp1252', 'latin-1'):
+                            try:
+                                with open(liste_participants_path, 'r', encoding=encoding) as f:
+                                    content = f.read()
+                                break
+                            except UnicodeDecodeError:
+                                continue
+                        if content is not None:
+                            participants = [p.strip() for p in content.replace(',', '\n').split('\n') if p.strip()]
+                    except Exception as e:
+                        logger.warning(f"Erreur lecture participants: {e}")
             
             # S'assurer que le président est dans la liste
             if president_seance and president_seance not in participants:
