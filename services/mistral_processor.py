@@ -19,11 +19,165 @@ logger = logging.getLogger(__name__)
 
 
 def extract_participants_from_pdf(pdf_path: Path) -> List[str]:
-    """Extrait les noms de participants depuis un PDF (un nom par ligne ou séparés par virgule)."""
+    """
+    Extrait les noms de participants depuis un PDF.
+    Utilise plusieurs séparateurs (virgule, point-virgule, pipe, tab, newline),
+    nettoie les titres (M., Mme, Dr., Pr.) et déduplique.
+    """
+    import re
     from pypdf import PdfReader
     reader = PdfReader(pdf_path)
     text = "\n".join(page.extract_text() or "" for page in reader.pages)
-    return [p.strip() for p in text.replace(",", "\n").split("\n") if p.strip()]
+    if not text.strip():
+        return []
+
+    # Séparateurs : newline, virgule, point-virgule, pipe, tabulation
+    raw = re.sub(r"[\r\n]+", "\n", text)
+    raw = re.sub(r"[,;\|\t]+", "\n", raw)
+    tokens = [t.strip() for t in raw.split("\n") if t.strip()]
+
+    # Nettoyer les titres courants en début de chaîne (optionnel)
+    title_pattern = re.compile(
+        r"^(?:M\.?|Mme|Mlle|Dr\.?|Pr\.?|Prof\.?)\s+",
+        re.IGNORECASE,
+    )
+    cleaned = []
+    for t in tokens:
+        name = title_pattern.sub("", t).strip()
+        if not name:
+            continue
+        # Ignorer les lignes trop courtes (bruit) ou trop longues (paragraphe)
+        if 2 <= len(name) <= 120:
+            cleaned.append(name)
+
+    # Dédupliquer en conservant l'ordre
+    seen = set()
+    result = []
+    for n in cleaned:
+        key = n.lower().strip()
+        if key not in seen:
+            seen.add(key)
+            result.append(n)
+
+    # Si le parsing produit une seule entrée très longue (noms collés), fallback split virgule/newline
+    if len(result) == 1 and len(result[0]) > 80:
+        fallback = [
+            p.strip()
+            for p in re.split(r"[\n,;]+", text)
+            if p.strip() and 2 <= len(p.strip()) <= 120
+        ]
+        if len(fallback) > 1:
+            seen = set()
+            result = []
+            for n in fallback:
+                key = n.lower().strip()
+                if key not in seen:
+                    seen.add(key)
+                    result.append(n)
+
+    return result
+
+
+def _extract_text_from_file(file_path: Optional[Path]) -> str:
+    """Extrait le texte d'un fichier PDF ou TXT. Retourne une chaîne vide si path est None ou fichier absent."""
+    if not file_path:
+        return ""
+    path = Path(file_path) if isinstance(file_path, str) else file_path
+    if not path.exists():
+        return ""
+    suffix = path.suffix.lower()
+    if suffix == ".pdf":
+        try:
+            from pypdf import PdfReader
+            reader = PdfReader(path)
+            return "\n".join(page.extract_text() or "" for page in reader.pages)
+        except Exception as e:
+            logger.warning(f"Erreur lecture PDF {path}: {e}")
+            return ""
+    if suffix in (".txt",):
+        try:
+            for encoding in ("utf-8", "cp1252", "latin-1"):
+                try:
+                    return path.read_text(encoding=encoding)
+                except UnicodeDecodeError:
+                    continue
+        except Exception as e:
+            logger.warning(f"Erreur lecture TXT {path}: {e}")
+    return ""
+
+
+def _parse_ordre_du_jour_points(text: str) -> List[Dict[str, Any]]:
+    """Parse le texte de l'ordre du jour pour extraire les points numérotés. Retourne [{numero, titre}, ...]."""
+    import re
+    points = []
+    # Numérotation : 1. Titre, 1) Titre, 1 - Titre
+    pattern = re.compile(r"^\s*(\d+)\s*[\.\)\-]\s*(.+)$", re.MULTILINE)
+    for m in pattern.finditer(text):
+        num = int(m.group(1))
+        titre = m.group(2).strip()
+        if titre:
+            points.append({"numero": num, "titre": titre})
+    if not points:
+        # Fallback : lignes non vides comme points 1, 2, 3...
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        for i, ln in enumerate(lines, 1):
+            points.append({"numero": i, "titre": ln})
+    return sorted(points, key=lambda x: x["numero"])
+
+
+def _parse_releves_votes(text: str) -> Dict[int, str]:
+    """Parse le texte des relevés de votes. Retourne {numero_point: description_vote}."""
+    import re
+    result = {}
+    # Chercher des blocs "Point N" ou "N." suivis du détail du vote
+    lines = text.splitlines()
+    current_num = None
+    current_lines = []
+    for line in lines:
+        m = re.match(r"^\s*(?:Point\s*)?(\d+)\s*[\.\)\-:\s]\s*(.*)$", line, re.IGNORECASE)
+        if m:
+            if current_num is not None and current_lines:
+                result[current_num] = " ".join(current_lines).strip()
+            current_num = int(m.group(1))
+            current_lines = [m.group(2).strip()] if m.group(2).strip() else []
+        else:
+            if current_num is not None and line.strip():
+                current_lines.append(line.strip())
+    if current_num is not None and current_lines:
+        result[current_num] = " ".join(current_lines).strip()
+    # Fallback : tout le texte comme vote du point 1
+    if not result and text.strip():
+        result[1] = text.strip()
+    return result
+
+
+def build_decisions_from_files(
+    ordre_du_jour_path: Optional[Path],
+    releves_votes_path: Optional[Path],
+) -> List[Dict[str, Any]]:
+    """
+    Construit le relevé des décisions à partir des fichiers ordre du jour et relevés de votes.
+    Retourne une liste de dicts [{numero, titre, vote}, ...] compatible avec le document generator.
+    """
+    odj_text = _extract_text_from_file(ordre_du_jour_path)
+    votes_text = _extract_text_from_file(releves_votes_path) if releves_votes_path else ""
+    points = _parse_ordre_du_jour_points(odj_text)
+    votes_by_num = _parse_releves_votes(votes_text) if votes_text else {}
+    decisions = []
+    for p in points:
+        num = p["numero"]
+        titre = p["titre"]
+        vote = votes_by_num.get(num, "")
+        decisions.append({
+            "numero": num,
+            "titre": titre,
+            "vote": vote or "Non soumis au vote ou non renseigné",
+        })
+    if not decisions and (odj_text or votes_text):
+        # Au moins un fichier fourni mais parsing vide : retourner une entrée générique
+        decisions = [{"numero": 1, "titre": "Points à l'ordre du jour", "vote": votes_text.strip() or "Non renseigné"}]
+    logger.info(f"build_decisions_from_files: {len(decisions)} décisions à partir des fichiers")
+    return decisions
 
 
 class MistralProcessor:
@@ -410,37 +564,69 @@ RÉPONSE (JSON strict, aucun texte avant/après):
         )
         return mapping
 
-    def generate_pre_compte_rendu(self, transcription_text: str, speaker_mapping: Dict[str, str]) -> str:
+    def generate_pre_compte_rendu(
+        self,
+        transcription_text: str,
+        speaker_mapping: Dict[str, str],
+        ordre_du_jour_text: Optional[str] = None,
+    ) -> str:
         """
-        Génère un pré-compte rendu avec Mistral Large
+        Génère un pré-compte rendu avec Mistral Large.
+        Si ordre_du_jour_text est fourni, structure le CR selon ces points.
         """
         # Remplacer les labels par les noms
         processed_text = transcription_text
         for code, name in speaker_mapping.items():
             processed_text = processed_text.replace(code, name)
-            
+
+        odj_block = ""
+        if ordre_du_jour_text and ordre_du_jour_text.strip():
+            odj_block = f"""
+ORDRE DU JOUR (à respecter pour la structure du pré-compte rendu) :
+---
+{ordre_du_jour_text.strip()[:8000]}
+---
+"""
+
+        format_example = """
+FORMAT ATTENDU (exemple) :
+---
+PRÉ-COMPTE RENDU – Réunion du [date]
+
+1. [Intitulé du point 1]
+   Synthèse des échanges : [qui a dit quoi, positions]. Décision ou suite donnée.
+
+2. [Intitulé du point 2]
+   Idem.
+
+Votes et décisions sont à mentionner clairement pour chaque point soumis au vote.
+---
+"""
+
         prompt = f"""Tu es un secrétaire de séance expert pour une université.
         
-        TÂCHE:
-        Rédige un pré-compte rendu formel, structuré et synthétique de cette réunion du CFVE.
-        
-        CONSIGNES:
-        1. Utilise un ton neutre et administratif.
-        2. Structure par points à l'ordre du jour.
-        3. Synthétise les débats en attribuant les idées aux bonnes personnes.
-        4. Mets en évidence les votes et décisions.
-        
-        TRANSCRIPTION:
-        {processed_text[:100000]} 
-        (Texte tronqué si trop long, concentre-toi sur le début et les points clés)
-        """
-        
+TÂCHE :
+Rédige un pré-compte rendu formel, structuré et synthétique de cette réunion (CFVE ou instance équivalente).
+Le document doit ressembler à un vrai pré-compte rendu administratif : titres de points, synthèse des débats par point, attribution des propos aux bonnes personnes, votes et décisions mis en évidence.
+{odj_block}
+CONSIGNES :
+1. Ton neutre et administratif.
+2. Structure obligatoirement par points, en suivant l'ordre du jour si fourni ci-dessus.
+3. Pour chaque point : synthétiser les débats en attribuant les idées aux bons intervenants.
+4. Indiquer clairement les votes et décisions pour les points soumis au vote.
+{format_example}
+
+TRANSCRIPTION DE LA RÉUNION :
+{processed_text[:100000]}
+(Texte tronqué si trop long ; privilégie le début et les points clés.)
+"""
+
         try:
             with mistral_breaker:
                 response = self.client.chat.complete(
                     model=self.model_large,
                     messages=[{"role": "user", "content": prompt}],
-                    temperature=0.2
+                    temperature=0.3,
                 )
             return response.choices[0].message.content
         except Exception as e:

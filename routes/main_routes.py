@@ -19,7 +19,12 @@ from threading import Thread
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
 from services.mistral_voxtral import MistralVoxtralClient
-from services.mistral_processor import MistralProcessor, extract_participants_from_pdf
+from services.mistral_processor import (
+    MistralProcessor,
+    extract_participants_from_pdf,
+    build_decisions_from_files,
+    _extract_text_from_file,
+)
 from services.document_generator import DocumentGenerator
 from services.log_manager import LogManager
 from orchestrator.pipeline_orchestrator import PipelineOrchestrator, AudioPipelineOrchestrator
@@ -816,10 +821,15 @@ def create_app():
                 if text and len(speaker_samples[code]) < 5:
                     speaker_samples[code].append(text)
 
+            # Autres speakers (déjà identifiés avec confiance >= 0.7), pour permettre correction
+            other_speakers = [s for s in all_speakers if s not in unidentified and s not in low_confidence]
+
             return jsonify({
                 'session_id': session_id,
+                'all_speakers': all_speakers,
                 'unidentified_speakers': unidentified,
                 'low_confidence_speakers': low_confidence,
+                'other_speakers': other_speakers,
                 'participants': participants,
                 'speaker_samples': speaker_samples,
                 'current_mapping': speaker_mapping,
@@ -865,13 +875,20 @@ def create_app():
                 return jsonify({'error': 'Transcription manquante, impossible de générer les documents'}), 500
 
             # Re-générer pré-compte rendu et décisions avec le mapping corrigé
+            context_files_pre = metadata.get('context_files', {})
+            odj_path_pre = context_files_pre.get('ordre_du_jour')
+            ordre_du_jour_text = _extract_text_from_file(Path(odj_path_pre) if odj_path_pre else None)
             pre_cr = mistral_processor.generate_pre_compte_rendu(
                 full_text,
                 speaker_mapping,
+                ordre_du_jour_text=ordre_du_jour_text or None,
             )
-            decisions = mistral_processor.extract_decisions(
-                full_text,
-                speaker_mapping,
+            context_files = metadata.get('context_files', {})
+            odj_path = context_files.get('ordre_du_jour')
+            votes_path = context_files.get('releves_votes')
+            decisions = build_decisions_from_files(
+                Path(odj_path) if odj_path else None,
+                Path(votes_path) if votes_path else None,
             )
 
             documents = document_generator.generate_all_documents(

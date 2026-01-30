@@ -17,6 +17,7 @@ from core.interfaces import (
     DocumentGenerationService,
     LogManagementService
 )
+from services.mistral_processor import build_decisions_from_files, _extract_text_from_file
 
 logger = logging.getLogger(__name__)
 
@@ -380,10 +381,14 @@ class PipelineOrchestrator:
                     'session_id': session_id,
                 }
 
-            # Génération du pré-compte rendu (Mistral Large)
+            # Génération du pré-compte rendu (Mistral Large), avec ordre du jour en contexte si fourni
+            context_files_pre = metadata.get('context_files', {})
+            odj_path_pre = context_files_pre.get('ordre_du_jour')
+            ordre_du_jour_text = _extract_text_from_file(Path(odj_path_pre) if odj_path_pre else None)
             pre_cr = self.llm_speaker_mapper.generate_pre_compte_rendu(
                 transcription_result.get('full_text', ''),
-                speaker_mapping
+                speaker_mapping,
+                ordre_du_jour_text=ordre_du_jour_text or None,
             )
             self.log_manager.log_status(session_id, 'llm_processing', 'Pré-compte rendu généré')
             logger.info(json.dumps({
@@ -394,10 +399,13 @@ class PipelineOrchestrator:
                 "timestamp": datetime.utcnow().isoformat(),
             }))
             
-            # Extraction des décisions (Mistral Large)
-            decisions = self.llm_speaker_mapper.extract_decisions(
-                transcription_result.get('full_text', ''),
-                speaker_mapping
+            # Relevé des décisions à partir des fichiers ordre du jour + relevés de votes
+            context_files = metadata.get('context_files', {})
+            odj_path = context_files.get('ordre_du_jour')
+            votes_path = context_files.get('releves_votes')
+            decisions = build_decisions_from_files(
+                Path(odj_path) if odj_path else None,
+                Path(votes_path) if votes_path else None,
             )
             self.log_manager.log_status(session_id, 'llm_processing', 'Décisions extraites', decisions)
             logger.info(json.dumps({
