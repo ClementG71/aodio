@@ -193,7 +193,7 @@ class MistralProcessor:
         self.client = Mistral(api_key=api_key)
         self.speaker_mapper = SpeakerMapper()
         self.enhanced_mapper = EnhancedSpeakerMapper()
-        self.temporal_mapper = TemporalSpeakerMapper()
+        self.temporal_mapper = TemporalSpeakerMapper(block_duration_minutes=60)
         self.transition_analyzer = TransitionAnalyzer()
         
         # Configuration des modèles

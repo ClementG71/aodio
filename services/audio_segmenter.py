@@ -12,18 +12,23 @@ from typing import Dict, List, Any, Optional
 
 logger = logging.getLogger(__name__)
 
+# Sample rate pour les segments (aligné avec AudioProcessor, meilleure qualité pour Voxtral)
+AUDIO_SEGMENT_SAMPLE_RATE = 44100
+
 
 class AudioSegmenter:
     """Gère le découpage des fichiers audio en segments"""
     
-    def __init__(self, max_segment_duration: float = 600):
+    def __init__(self, max_segment_duration: float = 600, sample_rate: int = None):
         """
         Initialise le segmenteur audio
         
         Args:
             max_segment_duration: Durée maximale d'un segment en secondes (défaut: 10 min)
+            sample_rate: Taux d'échantillonnage des segments (défaut: 44100)
         """
         self.max_segment_duration = max_segment_duration
+        self.sample_rate = sample_rate if sample_rate is not None else AUDIO_SEGMENT_SAMPLE_RATE
     
     @contextmanager
     def temporary_segments(self, segments: List[Dict[str, Any]]):
@@ -122,7 +127,7 @@ class AudioSegmenter:
             unique_id = str(uuid.uuid4())[:8]
             segment_path = output_dir / f"audio_segment_{i:04d}_{unique_id}.wav"
             
-            # Découper avec ffmpeg
+            # Découper avec ffmpeg (même sample rate que le pipeline pour qualité Voxtral)
             cmd = [
                 'ffmpeg',
                 '-threads', '0',
@@ -130,7 +135,7 @@ class AudioSegmenter:
                 '-ss', str(start_time),
                 '-t', str(seg_duration),
                 '-acodec', 'pcm_s16le',
-                '-ar', '16000',
+                '-ar', str(self.sample_rate),
                 '-ac', '1',
                 '-loglevel', 'error',
                 '-y',

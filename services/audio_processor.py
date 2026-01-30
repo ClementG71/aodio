@@ -17,7 +17,8 @@ class AudioProcessor:
     """Traite les fichiers audio avec amélioration de la qualité"""
     
     def __init__(self):
-        self.target_sample_rate = 16000  # Taux d'échantillonnage cible
+        # 44.1 kHz pour une meilleure qualité parole ; doc Mistral ne impose pas 16 kHz
+        self.target_sample_rate = 44100
         self.target_channels = 1  # Mono
         self.target_bitrate = '128k'  # Bitrate pour compression
         

@@ -402,8 +402,9 @@ class RunPodWorker:
                     logger.error(error_msg)
                     raise Exception(error_msg)
                 
-                # Job en cours (IN_QUEUE, IN_PROGRESS, etc.)
-                time.sleep(5)  # Attente de 5 secondes avant le prochain check
+                # Job en cours (IN_QUEUE, IN_PROGRESS, etc.) : polling adaptatif
+                sleep_seconds = 3 if elapsed_time < 90 else 8
+                time.sleep(sleep_seconds)
                 
             except requests.exceptions.RequestException as e:
                 logger.warning(f"Erreur lors de la vérification du statut: {str(e)}. Nouvelle tentative dans 5 secondes...")
