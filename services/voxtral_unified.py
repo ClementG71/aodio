@@ -91,17 +91,19 @@ class VoxtralUnifiedService(UnifiedTranscriptionService):
     ) -> Dict[str, Any]:
         """Un seul appel API pour un fichier <= 2h30. Utilise l'API REST directe pour diarize/context_bias."""
         retry_delay = 5
+        use_timestamp_granularities = True
         for attempt in range(max_retries):
             try:
+                # Doc Mistral : timestamp_granularities et language sont incompatibles ; on n'envoie pas language.
                 data = {
                     "model": self.model,
-                    "language": language,
-                    "temperature": 0.0,
+                    "temperature": "0.0",
                     "diarize": "true",
-                    "timestamp_granularities": '["segment"]',
                 }
                 if context_bias_str:
                     data["context_bias"] = context_bias_str
+                if use_timestamp_granularities:
+                    data["timestamp_granularities"] = "segment"
 
                 with open(audio_path, "rb") as f:
                     files = {"file": (os.path.basename(audio_path), f, "audio/wav")}
@@ -113,6 +115,16 @@ class VoxtralUnifiedService(UnifiedTranscriptionService):
                             files=files,
                             timeout=600,
                         )
+                if not resp.ok:
+                    try:
+                        err_body = resp.json()
+                    except Exception:
+                        err_body = resp.text
+                    logger.warning(f"Mistral transcriptions {resp.status_code}: {err_body}")
+                    if resp.status_code == 422 and use_timestamp_granularities:
+                        use_timestamp_granularities = False
+                        logger.info("422: retry sans timestamp_granularities")
+                        continue
                 resp.raise_for_status()
                 response = resp.json()
 
