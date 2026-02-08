@@ -10,6 +10,7 @@ services:
     environment:
       - SECRET_KEY=${SECRET_KEY}
       - MISTRAL_API_KEY=${MISTRAL_API_KEY}
+      - USE_VOXTRAL_ONLY=${USE_VOXTRAL_ONLY:-false}
       - RUNPOD_API_KEY=${RUNPOD_API_KEY}
       - RUNPOD_ENDPOINT_ID=${RUNPOD_ENDPOINT_ID}
       - FLASK_DEBUG=${FLASK_DEBUG:-False}

@@ -37,6 +37,13 @@ class TranscriptionService(ABC):
         pass
 
 
+class UnifiedTranscriptionService(DiarizationService, TranscriptionService):
+    """
+    Interface combinant diarisation et transcription en un seul service.
+    Utilisé par Voxtral Mini Transcribe V2 avec diarize=true.
+    """
+
+
 class LLMSpeakerMappingService(ABC):
     """Interface pour le service de mapping des locuteurs avec LLM"""
     

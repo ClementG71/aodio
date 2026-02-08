@@ -186,115 +186,99 @@ class PipelineOrchestrator:
             }))
             
             self.log_manager.log_status(session_id, 'processing', 'Démarrage du traitement')
-            
-            # 1. Diarisation et Transcription en parallèle (Text-First)
-            self.log_manager.log_status(session_id, 'processing', 'Lancement Diarisation et Transcription en parallèle...')
-            
-            with concurrent.futures.ThreadPoolExecutor() as executor:
-                # Diarisation (RunPod) - avec timeout et gestion d'erreurs
-                future_diar = executor.submit(
-                    self._run_diarization_with_timeout, 
-                    session_id, 
-                    metadata['processed_audio']
+
+            # Mode Voxtral-only : transcription + diarisation en un appel (pas d'alignement)
+            use_voxtral_only = (
+                os.getenv('USE_VOXTRAL_ONLY', 'false').lower() == 'true'
+                or self.diarization_service is self.transcription_service
+            )
+
+            if use_voxtral_only:
+                # 1. Voxtral unifié : transcription + diarisation
+                self.log_manager.log_status(session_id, 'processing', 'Transcription + diarisation Voxtral unifié...')
+                participants_path = metadata.get('context_files', {}).get('liste_participants')
+                raw_result = self.transcription_service.transcribe_file_full(
+                    metadata['processed_audio'], "fr",
+                    participants_path=participants_path
                 )
-                
-                # Transcription Text-First (Mistral)
-                future_trans = executor.submit(
-                    self.transcription_service.transcribe_file_full, 
-                    metadata['processed_audio'], "fr"
-                )
-                
-                # Attente résultats
-                diarization_result = future_diar.result()
-                
-                # Vérifier si la session a été annulée
-                if self.log_manager.is_cancelled(session_id):
-                    logger.info(f"Session {session_id} annulée, arrêt du pipeline")
-                    return
-                
-                # Vérifier si la diarisation a réussi
-                if diarization_result.get('status') in ['timeout', 'error', 'cancelled']:
-                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation en erreur ou timeout', diarization_result)
-                    logger.warning(f"Diarization issue: {diarization_result.get('message', 'Unknown error')}")
-                    
-                    # Continuer avec un résultat vide plutôt que de bloquer
-                    diarization_result = {
-                        'segments': [],
-                        'speakers': []
-                    }
-                else:
-                    self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
-                    logger.info(json.dumps({
-                        "session_id": session_id,
-                        "stage": "diarization",
-                        "event": "end",
-                        "message": "Diarisation terminée",
-                        "data": {"segments": len(diarization_result.get("segments", []))},
-                        "timestamp": datetime.utcnow().isoformat(),
-                    }))
-                    
-                    # Stocker le job_id dans les métadonnées pour permettre l'annulation
-                    if 'job_id' in diarization_result:
-                        try:
-                            from config import UPLOAD_FOLDER
-                            metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
-                            if metadata_path.exists():
-                                with open(metadata_path, 'r', encoding='utf-8') as f:
-                                    metadata = json.load(f)
-                                metadata['runpod_job_id'] = diarization_result['job_id']
-                                with open(metadata_path, 'w', encoding='utf-8') as f:
-                                    json.dump(metadata, f, ensure_ascii=False, indent=2)
-                        except Exception as e:
-                            logger.warning(f"Impossible de stocker le job_id: {str(e)}")
-                
-                raw_transcription = future_trans.result()
-                
-                # Vérifier si la session a été annulée
-                if self.log_manager.is_cancelled(session_id):
-                    logger.info(f"Session {session_id} annulée, arrêt du pipeline")
-                    return
-                
-                self.log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
+                transcription_result = {
+                    "segments": raw_result.get('segments', []),
+                    "full_text": raw_result.get('full_text', '')
+                }
+                self.log_manager.log_status(session_id, 'transcription', 'Transcription Voxtral unifié terminée', transcription_result)
                 logger.info(json.dumps({
                     "session_id": session_id,
-                    "stage": "transcription",
-                    "event": "end_raw",
-                    "message": "Transcription brute terminée",
-                    "data": {"segments": len(raw_transcription.get("segments", []))},
+                    "stage": "voxtral_unified",
+                    "event": "end",
+                    "message": "Transcription + diarisation Voxtral terminée",
+                    "data": {"segments": len(transcription_result.get("segments", []))},
                     "timestamp": datetime.utcnow().isoformat(),
                 }))
-            
-            # 2. Alignement (Fusion)
-            # Vérifier si la session a été annulée avant chaque étape
-            if self.log_manager.is_cancelled(session_id):
-                logger.info(f"Session {session_id} annulée, arrêt du pipeline")
-                return
-            
-            self.log_manager.log_status(session_id, 'processing', 'Alignement Audio/Texte en cours...')
-            
-            aligned_segments = self.transcription_service.aligner.align_strict_improved(
-                raw_transcription.get('segments', []),
-                diarization_result.get('segments', []),
-                raw_transcription.get('full_text', '')
-            )
-            
-            # Validation finale
-            self.transcription_service.mapper.validate_mapping(aligned_segments, diarization_result.get('segments', []))
-            
-            # Reconstruction résultat standard
-            transcription_result = {
-                "segments": aligned_segments,
-                "full_text": raw_transcription.get('full_text', '')
-            }
-            self.log_manager.log_status(session_id, 'transcription', 'Transcription alignée et validée', transcription_result)
-            logger.info(json.dumps({
-                "session_id": session_id,
-                "stage": "alignment",
-                "event": "end",
-                "message": "Alignement transcription/diarisation terminé",
-                "data": {"segments": len(aligned_segments)},
-                "timestamp": datetime.utcnow().isoformat(),
-            }))
+            else:
+                # 1. Diarisation et Transcription en parallèle (Text-First)
+                self.log_manager.log_status(session_id, 'processing', 'Lancement Diarisation et Transcription en parallèle...')
+
+                with concurrent.futures.ThreadPoolExecutor() as executor:
+                    future_diar = executor.submit(
+                        self._run_diarization_with_timeout,
+                        session_id,
+                        metadata['processed_audio']
+                    )
+                    future_trans = executor.submit(
+                        self.transcription_service.transcribe_file_full,
+                        metadata['processed_audio'], "fr"
+                    )
+
+                    diarization_result = future_diar.result()
+
+                    if self.log_manager.is_cancelled(session_id):
+                        logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                        return
+
+                    if diarization_result.get('status') in ['timeout', 'error', 'cancelled']:
+                        self.log_manager.log_status(session_id, 'diarization', 'Diarisation en erreur ou timeout', diarization_result)
+                        diarization_result = {'segments': [], 'speakers': []}
+                    else:
+                        self.log_manager.log_status(session_id, 'diarization', 'Diarisation terminée', diarization_result)
+                        if 'job_id' in diarization_result:
+                            try:
+                                from config import UPLOAD_FOLDER
+                                metadata_path = Path(UPLOAD_FOLDER) / session_id / 'metadata.json'
+                                if metadata_path.exists():
+                                    with open(metadata_path, 'r', encoding='utf-8') as f:
+                                        m = json.load(f)
+                                    m['runpod_job_id'] = diarization_result['job_id']
+                                    with open(metadata_path, 'w', encoding='utf-8') as f:
+                                        json.dump(m, f, ensure_ascii=False, indent=2)
+                            except Exception as e:
+                                logger.warning(f"Impossible de stocker le job_id: {str(e)}")
+
+                    raw_transcription = future_trans.result()
+
+                    if self.log_manager.is_cancelled(session_id):
+                        logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                        return
+
+                    self.log_manager.log_status(session_id, 'transcription', 'Transcription brute terminée (Text-First)')
+
+                if self.log_manager.is_cancelled(session_id):
+                    logger.info(f"Session {session_id} annulée, arrêt du pipeline")
+                    return
+
+                self.log_manager.log_status(session_id, 'processing', 'Alignement Audio/Texte en cours...')
+                aligned_segments = self.transcription_service.aligner.align_strict_improved(
+                    raw_transcription.get('segments', []),
+                    diarization_result.get('segments', []),
+                    raw_transcription.get('full_text', '')
+                )
+                self.transcription_service.mapper.validate_mapping(
+                    aligned_segments, diarization_result.get('segments', [])
+                )
+                transcription_result = {
+                    "segments": aligned_segments,
+                    "full_text": raw_transcription.get('full_text', '')
+                }
+                self.log_manager.log_status(session_id, 'transcription', 'Transcription alignée et validée', transcription_result)
             
             # 3. Traitement LLM (Full Mistral)
             if self.log_manager.is_cancelled(session_id):

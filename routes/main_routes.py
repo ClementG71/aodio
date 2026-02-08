@@ -19,6 +19,7 @@ from threading import Thread
 from services.audio_processor import AudioProcessor
 from services.runpod_worker import RunPodWorker
 from services.mistral_voxtral import MistralVoxtralClient
+from services.voxtral_unified import VoxtralUnifiedService
 from services.mistral_processor import (
     MistralProcessor,
     extract_participants_from_pdf,
@@ -49,6 +50,7 @@ def create_app():
     app.config['RUNPOD_ENDPOINT_ID'] = os.getenv('RUNPOD_ENDPOINT_ID')
     app.config['MISTRAL_API_KEY'] = os.getenv('MISTRAL_API_KEY')
     app.config['MISTRAL_ENDPOINT'] = os.getenv('MISTRAL_ENDPOINT', 'https://api.mistral.ai/v1')
+    app.config['USE_VOXTRAL_ONLY'] = os.getenv('USE_VOXTRAL_ONLY', 'false').lower() == 'true'
     
     # Configuration explicite du dossier des templates pour éviter les problèmes de chemin
     templates_path = os.path.join(os.getcwd(), 'templates')
@@ -74,40 +76,53 @@ def create_app():
     if app_base_url and not app_base_url.startswith('http'):
         app_base_url = f"https://{app_base_url}"
     
-    # Initialiser les services RunPod et Mistral avec logging détaillé
+    # Initialiser les services RunPod, Mistral et/ou Voxtral unifié
     runpod_worker = None
     mistral_client = None
     mistral_processor = None
-    
+    voxtral_unified = None
+
     logger.info("Initialisation des services - Configuration actuelle:")
+    logger.info(f"  USE_VOXTRAL_ONLY: {app.config.get('USE_VOXTRAL_ONLY')}")
     logger.info(f"  RUNPOD_API_KEY: {'***' if app.config.get('RUNPOD_API_KEY') else 'Non défini'}")
     logger.info(f"  RUNPOD_ENDPOINT_ID: {'***' if app.config.get('RUNPOD_ENDPOINT_ID') else 'Non défini'}")
     logger.info(f"  MISTRAL_API_KEY: {'***' if app.config.get('MISTRAL_API_KEY') else 'Non défini'}")
-    
-    if app.config.get('RUNPOD_API_KEY') and app.config.get('RUNPOD_ENDPOINT_ID'):
+
+    if app.config.get('USE_VOXTRAL_ONLY') and app.config.get('MISTRAL_API_KEY'):
         try:
-            runpod_worker = RunPodWorker(
-                api_key=app.config['RUNPOD_API_KEY'],
-                endpoint_id=app.config['RUNPOD_ENDPOINT_ID'],
-                base_url=app_base_url
-            )
-            logger.info("RunPod Worker initialisé avec succès")
+            voxtral_unified = VoxtralUnifiedService(api_key=app.config['MISTRAL_API_KEY'])
+            logger.info("VoxtralUnifiedService initialisé - mode transcription+diarisation unifié")
         except Exception as e:
-            logger.error(f"Échec de l'initialisation de RunPod Worker: {str(e)}", exc_info=True)
+            logger.error(f"Échec VoxtralUnifiedService: {str(e)}", exc_info=True)
     else:
-        logger.warning("RunPod non initialisé - clés API manquantes")
-    
+        if app.config.get('RUNPOD_API_KEY') and app.config.get('RUNPOD_ENDPOINT_ID'):
+            try:
+                runpod_worker = RunPodWorker(
+                    api_key=app.config['RUNPOD_API_KEY'],
+                    endpoint_id=app.config['RUNPOD_ENDPOINT_ID'],
+                    base_url=app_base_url
+                )
+                logger.info("RunPod Worker initialisé avec succès")
+            except Exception as e:
+                logger.error(f"Échec de l'initialisation de RunPod Worker: {str(e)}", exc_info=True)
+        else:
+            logger.warning("RunPod non initialisé - clés API manquantes")
+
+        if app.config.get('MISTRAL_API_KEY'):
+            try:
+                mistral_client = MistralVoxtralClient(api_key=app.config['MISTRAL_API_KEY'])
+                logger.info("Mistral Voxtral Client initialisé avec succès")
+            except Exception as e:
+                logger.error(f"Échec de l'initialisation de Mistral: {str(e)}", exc_info=True)
+        else:
+            logger.warning("Mistral non initialisé - clé API manquante")
+
     if app.config.get('MISTRAL_API_KEY'):
         try:
-            mistral_client = MistralVoxtralClient(api_key=app.config['MISTRAL_API_KEY'])
-            logger.info("Mistral Voxtral Client initialisé avec succès")
-            
             mistral_processor = MistralProcessor(api_key=app.config['MISTRAL_API_KEY'])
             logger.info("Mistral Processor initialisé avec succès")
         except Exception as e:
-            logger.error(f"Échec de l'initialisation de Mistral: {str(e)}", exc_info=True)
-    else:
-        logger.warning("Mistral non initialisé - clé API manquante")
+            logger.error(f"Échec Mistral Processor: {str(e)}", exc_info=True)
     
     document_generator = DocumentGenerator()
     logger.info("Document Generator initialisé avec succès")
@@ -117,7 +132,12 @@ def create_app():
     logger.info("Audio Orchestrator initialisé avec succès")
     
     # Vérifier que tous les services nécessaires sont disponibles pour le pipeline complet
-    all_services_available = all([runpod_worker, mistral_client, mistral_processor])
+    # Mode Voxtral-only : seulement Mistral + MistralProcessor
+    # Mode classique : RunPod + Mistral + MistralProcessor
+    all_services_available = bool(mistral_processor) and (
+        bool(voxtral_unified)
+        or (bool(runpod_worker) and bool(mistral_client))
+    )
     logger.info(f"Tous les services disponibles pour pipeline complet: {all_services_available}")
     
     # Déclarer la variable globale avant l'initialisation
@@ -125,11 +145,13 @@ def create_app():
     pipeline_orchestrator = None
 
     if all_services_available:
+        diarization_svc = voxtral_unified if voxtral_unified else runpod_worker
+        transcription_svc = voxtral_unified if voxtral_unified else mistral_client
         try:
             pipeline_orchestrator = PipelineOrchestrator(
                 audio_processor=audio_processor,
-                diarization_service=runpod_worker,
-                transcription_service=mistral_client,
+                diarization_service=diarization_svc,
+                transcription_service=transcription_svc,
                 llm_speaker_mapper=mistral_processor,
                 document_generator=document_generator,
                 log_manager=log_manager,
@@ -141,13 +163,17 @@ def create_app():
             pipeline_orchestrator = None
     else:
         missing_services = []
-        if not runpod_worker:
-            missing_services.append("RunPod")
-        if not mistral_client:
-            missing_services.append("Mistral Voxtral")
-        if not mistral_processor:
-            missing_services.append("Mistral Processor")
-        
+        if voxtral_unified:
+            if not mistral_processor:
+                missing_services.append("Mistral Processor")
+        else:
+            if not runpod_worker:
+                missing_services.append("RunPod")
+            if not mistral_client:
+                missing_services.append("Mistral Voxtral")
+            if not mistral_processor:
+                missing_services.append("Mistral Processor")
+
         logger.warning(f"Pipeline Orchestrator non initialisé - services manquants: {', '.join(missing_services)}")
         logger.warning(f"Services manquants: {', '.join(missing_services)}. Certaines fonctionnalités seront limitées.")
     

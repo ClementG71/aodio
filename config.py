@@ -11,6 +11,9 @@ BASE_DIR = Path(__file__).parent.resolve()
 # Vérifier si nous sommes dans un environnement Dokploy
 DOKPLOY_ENV = os.getenv('DOKPLOY_ENV', 'false').lower() == 'true'
 
+# Mode Voxtral-only : transcription + diarisation via Voxtral Mini Transcribe V2 uniquement (pas de RunPod)
+USE_VOXTRAL_ONLY = os.getenv('USE_VOXTRAL_ONLY', 'false').lower() == 'true'
+
 # Configuration des dossiers selon l'environnement
 if DOKPLOY_ENV:
     # Configuration pour Dokploy - chemins absolus
